@@ -1,53 +1,77 @@
----
-sidebar_position: 1
----
+# Example Cosmos EVM Chain
 
-# `SimApp`
+This directory contains an example chain that uses the Cosmos EVM
+modules. It is based on the simapp implementation on the Cosmos SDK
+repository, which itself is a simplified version of a Cosmos SDK-based
+blockchain.
 
-`SimApp` is an application built using the Cosmos SDK for testing and educational purposes.
+This chain implementation is used to demonstrate the integration of Cosmos EVM
+as well as to provide a chain object for testing purposes within the repository.
 
-## Running testnets with `simd`
+## Config
 
-If you want to spin up a quick testnet with your friends, you can follow these steps.
-Unless otherwise noted, every step must be done by everyone who wants to participate
-in this testnet.
+By default, this chain has the following configuration:
 
-1. From the root directory of the Cosmos SDK repository, run `$ make build`. This will build the
-    `simd` binary inside a new `build` directory. The following instructions are run from inside
-    the `build` directory.
-2. If you've run `simd` before, you may need to reset your database before starting a new
-    testnet. You can reset your database with the following command: `$ ./simd comet unsafe-reset-all`.
-3. `$ ./simd init [moniker] --chain-id [chain-id]`. This will initialize a new working directory
-    at the default location `~/.simapp`. You need to provide a "moniker" and a "chain id". These
-    two names can be anything, but you will need to use the same "chain id" in the following steps.
-4. `$ ./simd keys add [key_name]`. This will create a new key, with a name of your choosing.
-    Save the output of this command somewhere; you'll need the address generated here later.
-5. `$ ./simd genesis add-genesis-account [key_name] [amount]`, where `key_name` is the same key name as
-    before; and `amount` is something like `10000000000000000000000000stake`.
-6. `$ ./simd genesis gentx [key_name] [amount] --chain-id [chain-id]`. This will create the genesis
-    transaction for your new chain. Here `amount` should be at least `1000000000stake`. If you
-    provide too much or too little, you will encounter an error when starting your node.
-7. Now, one person needs to create the genesis file `genesis.json` using the genesis transactions
-   from every participant, by gathering all the genesis transactions under `config/gentx` and then
-   calling `$ ./simd genesis collect-gentxs`. This will create a new `genesis.json` file that includes data
-   from all the validators (we sometimes call it the "super genesis file" to distinguish it from
-   single-validator genesis files).
-8. Once you've received the super genesis file, overwrite your original `genesis.json` file with
-    the new super `genesis.json`.
-9. Modify your `config/config.toml` (in the simapp working directory) to include the other participants as
-    persistent peers:
+| Option              | Value                  |
+|---------------------|------------------------|
+| Binary              | `evmd`                 |
+| Chain ID            | `cosmos_262144-1`      |
+| Custom Opcodes      | -                      |
+| Default Token Pairs | 1 for the native token |
+| Denomination        | `utest`                |
+| EVM permissioning   | permissionless         |
+| Enabled Precompiles | all                    |
 
-    ```text
-    # Comma separated list of nodes to keep persistent connections to
-    persistent_peers = "[validator_address]@[ip_address]:[port],[validator_address]@[ip_address]:[port]"
-    ```
+## Running The Chain
 
-    You can find `validator_address` by running `$ ./simd comet show-node-id`. The output will
-    be the hex-encoded `validator_address`. The default `port` is 26656.
-10. Now you can start your nodes: `$ ./simd start`.
+To run the example, execute the local node script found within this repository:
 
-Now you have a small testnet that you can use to try out changes to the Cosmos SDK or CometBFT!
+```bash
+./local_node.sh [FLAGS]
+```
 
-NOTE: Sometimes creating the network through the `collect-gentxs` will fail, and validators will start
-in a funny state (and then panic). If this happens, you can try to create and start the network first
-with a single validator and then add additional validators using a `create-validator` transaction.
+Available flags are:
+
+- `-y`: Overwrite previous database
+- `-n`: Do **not** overwrite previous database
+- `--no-install`: Skip installation of the binary
+- `--remote-debugging`: Build a binary suitable for remote debugging
+
+## Connect to Wallet
+
+For the sake of this example, we'll be using Metamask:
+
+1. Use the following seed phrase when adding a new wallet:
+`gesture inject test cycle original hollow east ridge hen combine
+junk child baconzero hope comfort vacuum milk pitch cage oppose
+unhappy lunar seat`
+2. On the top left of the Metamask extension, click the Network button.
+3. Click Add custom network from the bottom of the modal.
+4. Under Default RPC URL, add the RPC URL as http://localhost:8545. Ensure your chain is running.
+5. Once added, copy the rest of the settings shown in the below images.
+
+![Button to select network](guide/networks.png "Networks Select")
+![Button to add network](guide/add_network.png "Networks Add")
+![RPC URL Settings](guide/rpc_url.png "RPC URL")
+![Overview of required settings](guide/settings.png "Settings Overview")
+
+## Available Cosmos SDK Modules
+
+As mentioned above, this exemplary chain implementation is a reduced version of `simapp`.
+Specifically, instead of offering access to all Cosmos SDK modules, it just includes the following:
+
+- `auth`
+- `authz`
+- `bank`
+- `capability`
+- `consensus`
+- `distribution`
+- `evidence`
+- `feegrant`
+- `genutil`
+- `gov`
+- `mint`
+- `params`
+- `slashing`
+- `staking`
+- `upgrade`
