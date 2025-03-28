@@ -16,11 +16,11 @@ import (
 
 	abci "github.com/cometbft/cometbft/abci/types"
 
+	chainante "evmd/ante"
 	dbm "github.com/cosmos/cosmos-db"
 	evmante "github.com/cosmos/evm/ante"
 	cosmosevmante "github.com/cosmos/evm/ante/evm"
 	evmosencoding "github.com/cosmos/evm/encoding"
-	chainante "github.com/cosmos/evm/evmd/ante"
 	srvflags "github.com/cosmos/evm/server/flags"
 	cosmosevmtypes "github.com/cosmos/evm/types"
 	cosmosevmutils "github.com/cosmos/evm/utils"
@@ -944,6 +944,16 @@ func (app *EVMD) GetMemKey(storeKey string) *storetypes.MemoryStoreKey {
 func (app *EVMD) GetSubspace(moduleName string) paramstypes.Subspace {
 	subspace, _ := app.ParamsKeeper.GetSubspace(moduleName)
 	return subspace
+}
+
+// GetStoreKeys returns all the stored store keys.
+func (app *EVMD) GetStoreKeys() []storetypes.StoreKey {
+	keys := make([]storetypes.StoreKey, 0, len(app.keys))
+	for _, key := range app.keys {
+		keys = append(keys, key)
+	}
+
+	return keys
 }
 
 // SimulationManager implements the SimulationApp interface

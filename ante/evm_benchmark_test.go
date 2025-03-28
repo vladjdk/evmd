@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"testing"
 
+	chainante "evmd/ante"
 	"github.com/cosmos/evm/ante"
 	ethante "github.com/cosmos/evm/ante/evm"
-	chainante "github.com/cosmos/evm/evmd/ante"
 	cmmnfactory "github.com/cosmos/evm/testutil/integration/common/factory"
 	"github.com/cosmos/evm/testutil/integration/os/factory"
 	"github.com/cosmos/evm/testutil/integration/os/grpc"

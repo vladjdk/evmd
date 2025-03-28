@@ -3,19 +3,18 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"evmd"
 	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-
 	cmtconfig "github.com/cometbft/cometbft/config"
 	cmttime "github.com/cometbft/cometbft/types/time"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"net"
+	"os"
+	"path/filepath"
 
 	"cosmossdk.io/math"
 	"cosmossdk.io/math/unsafe"
-	"cosmossdk.io/simapp"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
@@ -492,7 +491,7 @@ func writeFile(name, dir string, contents []byte) error {
 
 // startTestnet starts an in-process testnet
 func startTestnet(cmd *cobra.Command, args startArgs) error {
-	networkConfig := network.DefaultConfig(simapp.NewTestNetworkFixture)
+	networkConfig := evmd.DefaultConfig(evmd.NewTestNetworkFixture)
 
 	// Default networkConfig.ChainID is random, and we should only override it if chainID provided
 	// is non-empty

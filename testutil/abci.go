@@ -8,8 +8,7 @@ import (
 	tmproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmttypes "github.com/cometbft/cometbft/types"
 
-	app "github.com/cosmos/evm/evmd"
-	"github.com/cosmos/evm/testutil/tx"
+	app "evmd"
 
 	errorsmod "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
@@ -65,10 +64,10 @@ func DeliverTx(
 	msgs ...sdk.Msg,
 ) (abci.ExecTxResult, error) {
 	txConfig := exampleApp.GetTxConfig()
-	tx, err := tx.PrepareCosmosTx(
+	tx, err := PrepareCosmosTx(
 		ctx,
 		exampleApp,
-		tx.CosmosTxArgs{
+		CosmosTxArgs{
 			TxCfg:    txConfig,
 			Priv:     priv,
 			ChainID:  ctx.ChainID(),
@@ -93,7 +92,7 @@ func DeliverEthTx(
 ) (abci.ExecTxResult, error) {
 	txConfig := exampleApp.GetTxConfig()
 
-	tx, err := tx.PrepareEthTx(txConfig, priv, msgs...)
+	tx, err := PrepareEthTx(txConfig, priv, msgs...)
 	if err != nil {
 		return abci.ExecTxResult{}, err
 	}
@@ -120,7 +119,7 @@ func DeliverEthTxWithoutCheck(
 ) (abci.ExecTxResult, error) {
 	txConfig := exampleApp.GetTxConfig()
 
-	tx, err := tx.PrepareEthTx(txConfig, priv, msgs...)
+	tx, err := PrepareEthTx(txConfig, priv, msgs...)
 	if err != nil {
 		return abci.ExecTxResult{}, err
 	}
@@ -143,10 +142,10 @@ func CheckTx(
 ) (abci.ResponseCheckTx, error) {
 	txConfig := exampleApp.GetTxConfig()
 
-	tx, err := tx.PrepareCosmosTx(
+	tx, err := PrepareCosmosTx(
 		ctx,
 		exampleApp,
-		tx.CosmosTxArgs{
+		CosmosTxArgs{
 			TxCfg:    txConfig,
 			Priv:     priv,
 			ChainID:  ctx.ChainID(),
@@ -169,7 +168,7 @@ func CheckEthTx(
 ) (abci.ResponseCheckTx, error) {
 	txConfig := exampleApp.GetTxConfig()
 
-	tx, err := tx.PrepareEthTx(txConfig, priv, msgs...)
+	tx, err := PrepareEthTx(txConfig, priv, msgs...)
 	if err != nil {
 		return abci.ResponseCheckTx{}, err
 	}

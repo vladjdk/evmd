@@ -14,4 +14,6 @@ const (
 	SixDecimalsChainID = "ossix_9002"
 
 	CosmosChainID = "cosmos_262144"
+
+	SimChainID = "cosmos_262144"
 )

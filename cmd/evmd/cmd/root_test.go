@@ -1,13 +1,12 @@
 package cmd_test
 
 import (
+	"evmd"
+	"evmd/cmd/evmd/cmd"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"cosmossdk.io/simapp"
-	"cosmossdk.io/simapp/simd/cmd"
 
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
@@ -22,7 +21,7 @@ func TestInitCmd(t *testing.T) {
 		fmt.Sprintf("--%s=%s", cli.FlagOverwrite, "true"), // Overwrite genesis.json, in case it already exists
 	})
 
-	require.NoError(t, svrcmd.Execute(rootCmd, "", simapp.DefaultNodeHome))
+	require.NoError(t, svrcmd.Execute(rootCmd, "", evmd.DefaultNodeHome))
 }
 
 func TestHomeFlagRegistration(t *testing.T) {
@@ -35,7 +34,7 @@ func TestHomeFlagRegistration(t *testing.T) {
 		homeDir,
 	})
 
-	require.NoError(t, svrcmd.Execute(rootCmd, "", simapp.DefaultNodeHome))
+	require.NoError(t, svrcmd.Execute(rootCmd, "", evmd.DefaultNodeHome))
 
 	result, err := rootCmd.Flags().GetString(flags.FlagHome)
 	require.NoError(t, err)

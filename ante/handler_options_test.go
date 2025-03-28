@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	chainante "evmd/ante"
 	"github.com/cosmos/evm/ante"
 	ethante "github.com/cosmos/evm/ante/evm"
-	chainante "github.com/cosmos/evm/evmd/ante"
 	"github.com/cosmos/evm/testutil/integration/os/network"
 	"github.com/cosmos/evm/types"
 )

@@ -8,8 +8,8 @@ import (
 	tmproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmtypes "github.com/cometbft/cometbft/types"
 
+	exampleapp "evmd"
 	dbm "github.com/cosmos/cosmos-db"
-	exampleapp "github.com/cosmos/evm/evmd"
 	cosmosevmtypes "github.com/cosmos/evm/types"
 
 	"cosmossdk.io/log"

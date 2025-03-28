@@ -1,7 +1,7 @@
 package evmd
 
 import (
-	"github.com/cosmos/evm/evmd/eips"
+	"evmd/eips"
 	"github.com/cosmos/evm/x/vm/core/vm"
 )
 
