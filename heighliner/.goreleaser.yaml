@@ -1,4 +1,0 @@
-version: 1
-before:
-  hooks:
-  - bash -c 'cat chains/*.yaml > chains.yaml'

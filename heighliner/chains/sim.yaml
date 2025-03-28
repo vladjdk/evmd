@@ -1,8 +1,0 @@
-# Sim (for testing)
-- name: sim
-  github-organization: cosmos
-  github-repo: cosmos-sdk
-  dockerfile: cosmos
-  build-target: make build
-  binaries:
-    - build/simd

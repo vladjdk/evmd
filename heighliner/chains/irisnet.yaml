@@ -1,8 +1,0 @@
-# IRISnet
-- name: irisnet
-  github-organization: irisnet
-  github-repo: irishub
-  dockerfile: cosmos
-  build-target: make install
-  binaries:
-    - /go/bin/iris
