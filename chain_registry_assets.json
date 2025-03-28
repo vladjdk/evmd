@@ -11,7 +11,7 @@
         },
         {
           "denom": "TOKEN",
-          "exponent": 6
+          "exponent": 18
         }
       ],
       "base": "token",

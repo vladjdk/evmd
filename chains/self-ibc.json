@@ -2,7 +2,7 @@
     "chains": [
         {
             "name": "testevm",
-            "chain_id": "localchain-1",
+            "chain_id": "localchain_9000-1",
             "docker_image": {
                 "repository": "testevm",
                 "version": "local",
@@ -33,26 +33,26 @@
                     {
                         "name": "acc0",
                         "amount": "25000000000%DENOM%",
-                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
                     },
                     {
                         "name": "acc1",
                         "amount": "24000000000%DENOM%",
-                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
                     },
                     {
                         "name": "user0",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos1x7ymuxr2jyef2rguulyt0rh0hurh2ujkp8kt62",
-                        "mnemonic": "thrive long crack where blossom bunker predict point crater plug cupboard balance you fine modify sorry copy grow sand mutual learn usage car taste"
+                        "address": "cosmos1lqyfyc9kkvf2gm8h9uxdp35tgf0rfjss5s7jtw",
+                        "mnemonic": "brown dumb helmet alcohol degree original lawn cradle reform trim leader museum day borrow oyster leave shop ranch aunt just royal borrow reduce fresh"
                     },
                     {
                         "name": "user1",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos1uuyfmw0zylqe4xnw2pwu029t6gmzzplk2uuq5w",
-                        "mnemonic": "relax message shed spend myth flee spice wreck public friend dust scorpion wisdom marriage ribbon visa language matrix tennis nice evoke dwarf prosper sponsor"
+                        "address": "cosmos1p2gmn6clmwcdhan9tgmmva229zuptlkx3j0dqu",
+                        "mnemonic": "citizen thought network laundry movie police humble smooth frost pig bind advance sheriff wing hand various hundred educate spray private endless quit evoke include"
                     }
                 ]
             },
@@ -73,12 +73,12 @@
                 }
             ],
             "ibc_paths": [
-                "localchain-1_localchain-2"
+                "localchain_9000-1_localchain_9000-2"
             ],
             "number_vals": 1,
             "number_node": 0,
             "chain_type": "cosmos",
-            "coin_type": 118,
+            "coin_type": 60,
             "binary": "simd",
             "bech32_prefix": "cosmos",
             "denom": "token",
@@ -95,7 +95,7 @@
         },
         {
             "name": "testevm",
-            "chain_id": "localchain-2",
+            "chain_id": "localchain_9000-2",
             "docker_image": {
                 "repository": "testevm",
                 "version": "local",
@@ -126,36 +126,36 @@
                     {
                         "name": "acc0",
                         "amount": "25000000000%DENOM%",
-                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
                     },
                     {
                         "name": "acc1",
                         "amount": "24000000000%DENOM%",
-                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
                     },
                     {
                         "name": "user0",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos169rnae9gf88hkg655yazxcqaycsju7u5pqxwd0",
-                        "mnemonic": "dismiss now strategy assault own knock mango team chicken tail fade cereal lake rabbit letter wash skirt cattle detect bomb oval fitness initial rely"
+                        "address": "cosmos1kz6pkdhkxtnls67hzvtsehzv8j0haen3dwe274",
+                        "mnemonic": "opera resist vast slogan suggest cherry rule pig clown system course behind dice pass dial bleak remind erupt leaf wood duck joke peasant record"
                     },
                     {
                         "name": "user1",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos1z35ecdgxkwpx86q4hhga0v39a7wgg3psu4xd2e",
-                        "mnemonic": "hello tenant dignity either rocket still chef moment love ticket secret seed slogan airport park hover report catch dutch mass eager winner join conduct"
+                        "address": "cosmos1pf5cgh87s29d5t9fmlpe47vj55ja24yalyav7s",
+                        "mnemonic": "business brush essence salute alpha net wave picnic pull inhale clerk traffic coast remember hedgehog maximum neither spider rude client tray thrive banana merge"
                     }
                 ]
             },
             "ibc_paths": [
-                "localchain-1_localchain-2"
+                "localchain_9000-1_localchain_9000-2"
             ],
             "number_vals": 1,
             "number_node": 0,
             "chain_type": "cosmos",
-            "coin_type": 118,
+            "coin_type": 60,
             "binary": "simd",
             "bech32_prefix": "cosmos",
             "denom": "token",

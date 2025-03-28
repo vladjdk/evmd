@@ -19,7 +19,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/debug"
 	"github.com/cosmos/cosmos-sdk/client/flags"
-	"github.com/cosmos/cosmos-sdk/client/keys"
 	"github.com/cosmos/cosmos-sdk/client/pruning"
 	"github.com/cosmos/cosmos-sdk/client/rpc"
 	"github.com/cosmos/cosmos-sdk/client/snapshot"
@@ -32,6 +31,11 @@ import (
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+	evmosserverconfig "github.com/evmos/os/server/config"
+
+	evmoscmd "github.com/evmos/os/client"
+	evmosserver "github.com/evmos/os/server"
+	srvflags "github.com/evmos/os/server/flags"
 )
 
 // initCometBFTConfig helps to override default CometBFT Config values.
@@ -48,6 +52,10 @@ func initCometBFTConfig() *cmtcfg.Config {
 
 type CustomAppConfig struct {
 	serverconfig.Config
+
+	EVM     evmosserverconfig.EVMConfig
+	JSONRPC evmosserverconfig.JSONRPCConfig
+	TLS     evmosserverconfig.TLSConfig
 }
 
 // initAppConfig helps to override default appConfig template and configs.
@@ -74,10 +82,15 @@ func initAppConfig() (string, interface{}) {
 	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
 
 	customAppConfig := CustomAppConfig{
-		Config: *srvCfg,
+		Config:  *srvCfg,
+		EVM:     *evmosserverconfig.DefaultEVMConfig(),
+		JSONRPC: *evmosserverconfig.DefaultJSONRPCConfig(),
+		TLS:     *evmosserverconfig.DefaultTLSConfig(),
 	}
 
 	customAppTemplate := serverconfig.DefaultConfigTemplate
+
+	customAppTemplate += evmosserverconfig.DefaultEVMConfigTemplate
 
 	return customAppTemplate, customAppConfig
 }
@@ -91,6 +104,7 @@ func initRootCmd(
 
 	rootCmd.AddCommand(
 		genutilcli.InitCmd(chainApp.BasicModuleManager, app.DefaultNodeHome),
+		genutilcli.Commands(chainApp.TxConfig(), chainApp.BasicModuleManager, app.DefaultNodeHome),
 		cmtcli.NewCompletionCmd(rootCmd, true),
 		debug.Cmd(),
 		confixcmd.ConfigCommand(),
@@ -98,16 +112,33 @@ func initRootCmd(
 		snapshot.Cmd(newApp),
 	)
 
-	sdkserver.AddCommands(rootCmd, app.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
+	// add EVM' flavored TM commands to start server, etc.
+	evmosserver.AddCommands(
+		rootCmd,
+		evmosserver.NewDefaultStartOptions(newApp, app.DefaultNodeHome),
+		appExport,
+		addModuleInitFlags,
+	)
+
+	// add EVM key commands
+	rootCmd.AddCommand(
+		evmoscmd.KeyCommands(app.DefaultNodeHome, true),
+	)
 
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		server.StatusCommand(),
-		genesisCommand(chainApp.TxConfig(), chainApp.BasicModuleManager),
-		keys.Commands(),
+
 		queryCommand(),
 		txCommand(),
 	)
+
+	var err error
+	// add general tx flags to the root command
+	rootCmd, err = srvflags.AddTxFlags(rootCmd)
+	if err != nil {
+		panic(err)
+	}
 
 }
 
@@ -190,6 +221,7 @@ func newApp(
 	return app.NewChainApp(
 		logger, db, traceStore, true,
 		appOpts,
+		app.EVMAppOptions,
 		baseappOptions...,
 	)
 }
@@ -227,6 +259,7 @@ func appExport(
 		traceStore,
 		height == -1,
 		appOpts,
+		app.EVMAppOptions,
 	)
 
 	if height != -1 {

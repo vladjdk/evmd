@@ -1,0 +1,10 @@
+# Stride
+- name: stride
+  github-organization: Stride-Labs
+  github-repo: stride
+  dockerfile: cosmos
+  build-target: make build
+  binaries:
+    - build/strided
+
+

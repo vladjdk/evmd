@@ -1,0 +1,20 @@
+# Sei
+- name: sei
+  github-organization: sei-protocol
+  github-repo: sei-chain
+  dockerfile: cargo
+  pre-build: |
+    wget https://github.com/sei-protocol/sei-wasmvm/archive/refs/tags/v1.5.4-sei.0.0.1.zip
+    unzip v1.5.4-sei.0.0.1.zip
+    cd sei-wasmvm-1.5.4-sei.0.0.1
+    make build-rust
+    cp internal/api/libwasmvm.x86_64.so /usr/lib/libwasmvm.x86_64.so
+  build-target: |
+    make install install-price-feeder
+  binaries:
+    - /root/go/bin/seid
+    - /root/go/bin/price-feeder
+  libraries:
+    - /usr/lib/libwasmvm.x86_64.so
+  platforms:
+    - linux/amd64

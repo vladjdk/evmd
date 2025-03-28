@@ -15,6 +15,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
+	anteinterfaces "github.com/evmos/os/ante/interfaces"
 )
 
 // BankKeeper defines the contract needed for supply related APIs (noalias)
@@ -47,6 +48,10 @@ type HandlerOptions struct {
 	SigGasConsumer         func(meter storetypes.GasMeter, sig signing.SignatureV2, params authtypes.Params) error
 	TxFeeChecker           ante.TxFeeChecker // safe to be nil
 
+	MaxTxGasWanted  uint64
+	FeeMarketKeeper anteinterfaces.FeeMarketKeeper
+	EvmKeeper       anteinterfaces.EVMKeeper
+
 	IBCKeeper     *ibckeeper.Keeper
 	CircuitKeeper *circuitkeeper.Keeper
 }
@@ -70,6 +75,16 @@ func (options HandlerOptions) Validate() error {
 	}
 	if options.CircuitKeeper == nil {
 		return errorsmod.Wrap(errortypes.ErrLogic, "circuit keeper is required for ante builder")
+	}
+
+	if options.TxFeeChecker == nil {
+		return errorsmod.Wrap(errortypes.ErrLogic, "tx fee checker is required for AnteHandler")
+	}
+	if options.FeeMarketKeeper == nil {
+		return errorsmod.Wrap(errortypes.ErrLogic, "fee market keeper is required for AnteHandler")
+	}
+	if options.EvmKeeper == nil {
+		return errorsmod.Wrap(errortypes.ErrLogic, "evm keeper is required for AnteHandler")
 	}
 
 	return nil

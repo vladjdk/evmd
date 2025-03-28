@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -28,8 +29,6 @@ import (
 	ibcfeekeeper "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/keeper"
 	ibcfeetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
 
-	"github.com/cosmos/ibc-go/v8/modules/apps/transfer"
-	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 	ibc "github.com/cosmos/ibc-go/v8/modules/core"
 	ibcclienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types" //nolint:staticcheck
@@ -38,6 +37,8 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	transfer "github.com/evmos/os/x/ibc/transfer"
+	ibctransferkeeper "github.com/evmos/os/x/ibc/transfer/keeper"
 	"github.com/spf13/cast"
 
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
@@ -45,6 +46,7 @@ import (
 	"cosmossdk.io/client/v2/autocli"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/circuit"
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
@@ -76,7 +78,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 
-	"github.com/cosmos/cosmos-sdk/std"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/types/msgservice"
@@ -146,7 +147,24 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/gov"
 	"github.com/cosmos/cosmos-sdk/x/staking"
 
-	authante "github.com/cosmos/cosmos-sdk/x/auth/ante"
+	evmosante "github.com/evmos/os/ante"
+	evmosevmante "github.com/evmos/os/ante/evm"
+	evmosencoding "github.com/evmos/os/encoding"
+	srvflags "github.com/evmos/os/server/flags"
+	evmostypes "github.com/evmos/os/types"
+	evmosutils "github.com/evmos/os/utils"
+	"github.com/evmos/os/x/erc20"
+	erc20keeper "github.com/evmos/os/x/erc20/keeper"
+	erc20types "github.com/evmos/os/x/erc20/types"
+	"github.com/evmos/os/x/evm"
+	_ "github.com/evmos/os/x/evm/core/tracers/js"
+	_ "github.com/evmos/os/x/evm/core/tracers/native"
+	"github.com/evmos/os/x/evm/core/vm"
+	evmkeeper "github.com/evmos/os/x/evm/keeper"
+	evmtypes "github.com/evmos/os/x/evm/types"
+	"github.com/evmos/os/x/feemarket"
+	feemarketkeeper "github.com/evmos/os/x/feemarket/keeper"
+	feemarkettypes "github.com/evmos/os/x/feemarket/types"
 	chainante "github.com/rollchains/testevm/app/ante"
 )
 
@@ -154,7 +172,8 @@ const (
 	appName      = "testevm"
 	NodeDir      = ".testevm"
 	Bech32Prefix = "cosmos"
-	ChainID      = "localchain-1"
+
+	ChainID = "localchain_9000-1"
 )
 
 var (
@@ -168,6 +187,11 @@ var (
 		}, ",")
 )
 
+func init() {
+	// manually update the power reduction based on the base denom unit (10^18 [evm] or 10^6 [cosmos])
+	sdk.DefaultPowerReduction = math.NewIntFromBigInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(BaseDenomUnit), nil))
+}
+
 // These constants are derived from the above variables.
 // These are the ones we will want to use in the code, based on
 // any overrides above
@@ -175,9 +199,9 @@ var (
 	// DefaultNodeHome default home directories for appd
 	DefaultNodeHome = os.ExpandEnv("$HOME/") + NodeDir
 
-	CoinType uint32 = 118
+	CoinType uint32 = 60
 
-	BaseDenomUnit = 6
+	BaseDenomUnit int64 = 18
 
 	BaseDenom    = "token"
 	DisplayDenom = "MY_DENOM_DISPLAY" // TODO: ?
@@ -210,6 +234,9 @@ var maccPerms = map[string][]string{
 	ibcfeetypes.ModuleName:       nil,
 	icatypes.ModuleName:          nil,
 	tokenfactorytypes.ModuleName: {authtypes.Minter, authtypes.Burner},
+	evmtypes.ModuleName:          {authtypes.Minter, authtypes.Burner},
+	feemarkettypes.ModuleName:    nil,
+	erc20types.ModuleName:        {authtypes.Minter, authtypes.Burner},
 }
 
 var (
@@ -260,6 +287,9 @@ type ChainApp struct {
 	TokenFactoryKeeper  tokenfactorykeeper.Keeper
 	POAKeeper           poakeeper.Keeper
 	PacketForwardKeeper *packetforwardkeeper.Keeper
+	FeeMarketKeeper     feemarketkeeper.Keeper
+	EVMKeeper           *evmkeeper.Keeper
+	Erc20Keeper         erc20keeper.Keeper
 
 	ScopedIBCKeeper           capabilitykeeper.ScopedKeeper
 	ScopedICAHostKeeper       capabilitykeeper.ScopedKeeper
@@ -286,16 +316,17 @@ func NewChainApp(
 	traceStore io.Writer,
 	loadLatest bool,
 	appOpts servertypes.AppOptions,
+	evmosAppOptions EVMOptionsFn,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) *ChainApp {
 
 	// TODO: verify
-	interfaceRegistry := GetInterfaceRegistry()
-	appCodec := codec.NewProtoCodec(interfaceRegistry)
-	legacyAmino := codec.NewLegacyAmino()
-	txConfig := authtx.NewTxConfig(appCodec, authtx.DefaultSignModes)
-	std.RegisterLegacyAminoCodec(legacyAmino)
-	std.RegisterInterfaces(interfaceRegistry)
+
+	encodingConfig := evmosencoding.MakeConfig()
+	interfaceRegistry := encodingConfig.InterfaceRegistry
+	appCodec := encodingConfig.Codec
+	legacyAmino := encodingConfig.Amino
+	txConfig := encodingConfig.TxConfig
 
 	// Below we could construct and set an application specific mempool and
 	// ABCI 1.0 PrepareProposal and ProcessProposal handlers. These defaults are
@@ -339,6 +370,11 @@ func NewChainApp(
 
 	bApp.SetTxEncoder(txConfig.TxEncoder())
 
+	if err := evmosAppOptions(bApp.ChainID()); err != nil {
+		// initialize the EVM application configuration
+		panic(fmt.Errorf("failed to initialize EVM app configuration: %w", err))
+	}
+
 	keys := storetypes.NewKVStoreKeys(
 		authtypes.StoreKey, banktypes.StoreKey,
 		stakingtypes.StoreKey,
@@ -366,10 +402,15 @@ func NewChainApp(
 		tokenfactorytypes.StoreKey,
 		poa.StoreKey,
 		packetforwardtypes.StoreKey,
+		evmtypes.StoreKey,
+		feemarkettypes.StoreKey,
+		erc20types.StoreKey,
 	)
 
 	tkeys := storetypes.NewTransientStoreKeys(
 		paramstypes.TStoreKey,
+		evmtypes.TransientKey,
+		feemarkettypes.TransientKey,
 	)
 	memKeys := storetypes.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
 
@@ -612,6 +653,61 @@ func NewChainApp(
 	// If evidence needs to be handled for the app, set routes in router here and seal
 	app.EvidenceKeeper = *evidenceKeeper
 
+	app.FeeMarketKeeper = feemarketkeeper.NewKeeper(
+		appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		keys[feemarkettypes.StoreKey],
+		tkeys[feemarkettypes.TransientKey],
+		app.GetSubspace(feemarkettypes.ModuleName),
+	)
+
+	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
+
+	// NOTE: it's required to set up the EVM keeper before the ERC-20 keeper, because it is used in its instantiation.
+	app.EVMKeeper = evmkeeper.NewKeeper(
+		appCodec,
+		keys[evmtypes.StoreKey],
+		tkeys[evmtypes.TransientKey],
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.StakingKeeper,
+		app.FeeMarketKeeper,
+		&app.Erc20Keeper,
+		tracer, app.GetSubspace(evmtypes.ModuleName),
+	)
+
+	app.Erc20Keeper = erc20keeper.NewKeeper(
+		keys[erc20types.StoreKey],
+		appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.EVMKeeper,
+		app.StakingKeeper,
+		app.AuthzKeeper,
+		&app.TransferKeeper,
+	)
+
+	// NOTE: we are adding all available EVM extensions.
+	// Not all of them need to be enabled, which can be configured on a per-chain basis.
+	corePrecompiles := NewAvailableStaticPrecompiles(
+		*app.StakingKeeper,
+		app.DistrKeeper,
+		app.BankKeeper,
+		app.Erc20Keeper,
+		app.AuthzKeeper, // TODO: get off fork so we can support this
+		app.TransferKeeper,
+		app.IBCKeeper.ChannelKeeper,
+		app.EVMKeeper,
+		app.GovKeeper,
+		app.SlashingKeeper,
+		app.EvidenceKeeper,
+	)
+	app.EVMKeeper.WithStaticPrecompiles(
+		corePrecompiles,
+	)
+
 	// Create the tokenfactory keeper
 	app.TokenFactoryKeeper = tokenfactorykeeper.NewKeeper(
 		appCodec,
@@ -662,6 +758,7 @@ func NewChainApp(
 		app.AccountKeeper,
 		app.BankKeeper,
 		scopedTransferKeeper,
+		app.Erc20Keeper,
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 	)
 
@@ -787,6 +884,9 @@ func NewChainApp(
 		tokenfactory.NewAppModule(app.TokenFactoryKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(tokenfactorytypes.ModuleName)),
 		poamodule.NewAppModule(appCodec, app.POAKeeper),
 		packetforward.NewAppModule(app.PacketForwardKeeper, app.GetSubspace(packetforwardtypes.ModuleName)),
+		evm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.GetSubspace(evmtypes.ModuleName)),
+		feemarket.NewAppModule(app.FeeMarketKeeper, app.GetSubspace(feemarkettypes.ModuleName)),
+		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper, app.GetSubspace(erc20types.ModuleName)),
 	)
 
 	// BasicModuleManager defines the module BasicManager is in charge of setting up basic,
@@ -812,6 +912,10 @@ func NewChainApp(
 	// NOTE: capability module's beginblocker must come before any modules using capabilities (e.g. IBC)
 	app.ModuleManager.SetOrderBeginBlockers(
 		minttypes.ModuleName,
+		erc20types.ModuleName,
+		feemarkettypes.ModuleName,
+		evmtypes.ModuleName, // NOTE: EVM BeginBlocker must come after FeeMarket BeginBlocker
+
 		distrtypes.ModuleName,
 		slashingtypes.ModuleName,
 		evidencetypes.ModuleName,
@@ -838,6 +942,7 @@ func NewChainApp(
 		feegrant.ModuleName,
 		group.ModuleName,
 		// additional non simd modules
+		evmtypes.ModuleName, erc20types.ModuleName, feemarkettypes.ModuleName,
 		capabilitytypes.ModuleName,
 		ibctransfertypes.ModuleName,
 		ibcexported.ModuleName,
@@ -865,6 +970,12 @@ func NewChainApp(
 		slashingtypes.ModuleName,
 		govtypes.ModuleName,
 		minttypes.ModuleName,
+		// NOTE: feemarket module needs to be initialized before genutil module:
+		// gentx transactions use MinGasPriceDecorator.AnteHandle
+		evmtypes.ModuleName,
+		feemarkettypes.ModuleName,
+		erc20types.ModuleName,
+
 		crisistypes.ModuleName,
 		genutiltypes.ModuleName,
 		evidencetypes.ModuleName,
@@ -941,10 +1052,16 @@ func NewChainApp(
 		AccountKeeper:   app.AccountKeeper,
 		BankKeeper:      app.BankKeeper,
 		FeegrantKeeper:  app.FeeGrantKeeper,
+		FeeMarketKeeper: app.FeeMarketKeeper,
 		SignModeHandler: txConfig.SignModeHandler(),
 		IBCKeeper:       app.IBCKeeper,
 		CircuitKeeper:   &app.CircuitKeeper,
-		SigGasConsumer:  authante.DefaultSigVerificationGasConsumer,
+
+		EvmKeeper:              app.EVMKeeper,
+		ExtensionOptionChecker: evmostypes.HasDynamicFeeExtensionOption,
+		SigGasConsumer:         evmosante.SigVerificationGasConsumer,
+		MaxTxGasWanted:         cast.ToUint64(appOpts.Get(srvflags.EVMMaxTxGasWanted)),
+		TxFeeChecker:           evmosevmante.NewDynamicFeeChecker(app.FeeMarketKeeper),
 	})
 
 	// must be before Loading version
@@ -1067,7 +1184,8 @@ func (a *ChainApp) Configurator() module.Configurator {
 
 // InitChainer application update at chain initialization
 func (app *ChainApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
-	var genesisState GenesisState
+
+	var genesisState evmostypes.GenesisState
 	if err := json.Unmarshal(req.AppStateBytes, &genesisState); err != nil {
 		panic(err)
 	}
@@ -1134,6 +1252,21 @@ func (app *ChainApp) AutoCliOpts() autocli.AppOptions {
 // DefaultGenesis returns a default genesis from the registered AppModuleBasic's.
 func (a *ChainApp) DefaultGenesis() map[string]json.RawMessage {
 	genesis := a.BasicModuleManager.DefaultGenesis(a.appCodec)
+
+	mintGenState := minttypes.DefaultGenesisState()
+	mintGenState.Params.MintDenom = BaseDenom
+	genesis[minttypes.ModuleName] = a.appCodec.MustMarshalJSON(mintGenState)
+
+	evmGenState := evmtypes.DefaultGenesisState()
+	evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+	genesis[evmtypes.ModuleName] = a.appCodec.MustMarshalJSON(evmGenState)
+
+	// NOTE: for the example chain implementation we are also adding a default token pair,
+	// which is the base denomination of the chain (i.e. the WTOKEN contract)
+	erc20GenState := erc20types.DefaultGenesisState()
+	erc20GenState.TokenPairs = ExampleTokenPairs
+	erc20GenState.Params.NativePrecompiles = append(erc20GenState.Params.NativePrecompiles, WTokenContractMainnet)
+	genesis[erc20types.ModuleName] = a.appCodec.MustMarshalJSON(erc20GenState)
 
 	return genesis
 }
@@ -1249,6 +1382,15 @@ func BlockedAddresses() map[string]bool {
 	// allow the following addresses to receive funds
 	delete(blockedAddrs, authtypes.NewModuleAddress(govtypes.ModuleName).String())
 
+	blockedPrecompilesHex := evmtypes.AvailableStaticPrecompiles
+	for _, addr := range vm.PrecompiledAddressesBerlin {
+		blockedPrecompilesHex = append(blockedPrecompilesHex, addr.Hex())
+	}
+
+	for _, precompile := range blockedPrecompilesHex {
+		blockedAddrs[evmosutils.EthHexToCosmosAddr(precompile).String()] = true
+	}
+
 	return blockedAddrs
 }
 
@@ -1278,6 +1420,10 @@ func initParamsKeeper(appCodec codec.BinaryCodec, legacyAmino *codec.LegacyAmino
 	paramsKeeper.Subspace(tokenfactorytypes.ModuleName)
 	paramsKeeper.Subspace(poa.ModuleName)
 	paramsKeeper.Subspace(packetforwardtypes.ModuleName)
+
+	paramsKeeper.Subspace(evmtypes.ModuleName)
+	paramsKeeper.Subspace(feemarkettypes.ModuleName)
+	paramsKeeper.Subspace(erc20types.ModuleName)
 
 	return paramsKeeper
 }

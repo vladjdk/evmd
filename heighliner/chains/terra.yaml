@@ -1,0 +1,12 @@
+# Terra
+- name: terra
+  github-organization: phoenix-directive
+  github-repo: core
+  dockerfile: cosmos
+  build-target: make install
+  binaries:
+    - /go/bin/terrad
+  build-env:
+    - BUILD_TAGS=muslc
+
+

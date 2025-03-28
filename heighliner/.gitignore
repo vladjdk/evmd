@@ -1,0 +1,6 @@
+.vscode
+.idea
+/heighliner
+build
+dist/
+.DS_Store
