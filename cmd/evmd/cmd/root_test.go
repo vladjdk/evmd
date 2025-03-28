@@ -2,10 +2,10 @@ package cmd_test
 
 import (
 	"evmd"
-	"evmd/cmd/evmd/cmd"
 	"fmt"
 	"testing"
 
+	"evmd/cmd/evmd/cmd"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/client/flags"

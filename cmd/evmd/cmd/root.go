@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"errors"
+	"evmd"
 	"io"
 	"os"
 
+	evmdconfig "evmd/cmd/evmd/config"
 	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -12,8 +14,6 @@ import (
 	tmcfg "github.com/cometbft/cometbft/config"
 	cmtcli "github.com/cometbft/cometbft/libs/cli"
 
-	"evmd"
-	evmdconfig "evmd/cmd/evmd/config"
 	dbm "github.com/cosmos/cosmos-db"
 	cosmosevmcmd "github.com/cosmos/evm/client"
 	cosmosevmkeyring "github.com/cosmos/evm/crypto/keyring"

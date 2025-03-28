@@ -3,9 +3,10 @@ package testutil
 import (
 	"strconv"
 
+	exampleapp "evmd"
+
 	abci "github.com/cometbft/cometbft/abci/types"
 
-	exampleapp "evmd"
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
 
 	errorsmod "cosmossdk.io/errors"

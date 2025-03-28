@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"time"
 
+	exampleapp "evmd"
+
 	abci "github.com/cometbft/cometbft/abci/types"
 	tmproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmtypes "github.com/cometbft/cometbft/types"
 
-	exampleapp "evmd"
 	dbm "github.com/cosmos/cosmos-db"
 	cosmosevmtypes "github.com/cosmos/evm/types"
 

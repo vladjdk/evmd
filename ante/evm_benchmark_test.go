@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	chainante "evmd/ante"
+
 	"github.com/cosmos/evm/ante"
 	ethante "github.com/cosmos/evm/ante/evm"
 	cmmnfactory "github.com/cosmos/evm/testutil/integration/common/factory"

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 
+	chainante "evmd/ante"
 	"github.com/spf13/cast"
 
 	// Force-load the tracer engines to trigger registration due to Go-Ethereum v1.10.15 changes
@@ -16,7 +17,6 @@ import (
 
 	abci "github.com/cometbft/cometbft/abci/types"
 
-	chainante "evmd/ante"
 	dbm "github.com/cosmos/cosmos-db"
 	evmante "github.com/cosmos/evm/ante"
 	cosmosevmante "github.com/cosmos/evm/ante/evm"

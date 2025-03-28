@@ -3,9 +3,9 @@ package ante_test
 import (
 	"testing"
 
+	chainante "evmd/ante"
 	"github.com/stretchr/testify/require"
 
-	chainante "evmd/ante"
 	"github.com/cosmos/evm/ante"
 	ethante "github.com/cosmos/evm/ante/evm"
 	"github.com/cosmos/evm/testutil/integration/os/network"

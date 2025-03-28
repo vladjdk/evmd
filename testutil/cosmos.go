@@ -1,16 +1,19 @@
 package testutil
 
 import (
-	sdkmath "cosmossdk.io/math"
 	"evmd"
+	protov2 "google.golang.org/protobuf/proto"
+
+	"github.com/cosmos/evm/testutil/constants"
+
+	sdkmath "cosmossdk.io/math"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
-	"github.com/cosmos/evm/testutil/constants"
-	protov2 "google.golang.org/protobuf/proto"
 )
 
 var DefaultFee = sdk.NewCoin(constants.ExampleAttoDenom, sdkmath.NewInt(1e16)) // 0.01 AATOM

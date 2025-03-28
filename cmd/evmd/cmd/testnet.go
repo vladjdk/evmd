@@ -3,15 +3,17 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
-	"evmd"
 	"fmt"
-	cmtconfig "github.com/cometbft/cometbft/config"
-	cmttime "github.com/cometbft/cometbft/types/time"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"net"
 	"os"
 	"path/filepath"
+
+	"evmd"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	cmtconfig "github.com/cometbft/cometbft/config"
+	cmttime "github.com/cometbft/cometbft/types/time"
 
 	"cosmossdk.io/math"
 	"cosmossdk.io/math/unsafe"
@@ -482,11 +484,7 @@ func writeFile(name, dir string, contents []byte) error {
 		return fmt.Errorf("could not create directory %q: %w", dir, err)
 	}
 
-	if err := os.WriteFile(file, contents, 0o600); err != nil {
-		return err
-	}
-
-	return nil
+	return os.WriteFile(file, contents, 0o600)
 }
 
 // startTestnet starts an in-process testnet

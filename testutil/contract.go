@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	exampleapp "evmd"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -11,7 +12,6 @@ import (
 
 	abci "github.com/cometbft/cometbft/abci/types"
 
-	exampleapp "evmd"
 	"github.com/cosmos/evm/testutil/tx"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/cosmos/gogoproto/proto"
