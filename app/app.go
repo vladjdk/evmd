@@ -29,6 +29,8 @@ import (
 	ibcfeekeeper "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/keeper"
 	ibcfeetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
 
+	transfer "github.com/cosmos/evm/x/ibc/transfer"
+	ibctransferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 	ibc "github.com/cosmos/ibc-go/v8/modules/core"
 	ibcclienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types" //nolint:staticcheck
@@ -37,8 +39,6 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
-	transfer "github.com/evmos/os/x/ibc/transfer"
-	ibctransferkeeper "github.com/evmos/os/x/ibc/transfer/keeper"
 	"github.com/spf13/cast"
 
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
@@ -147,24 +147,24 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/gov"
 	"github.com/cosmos/cosmos-sdk/x/staking"
 
-	evmosante "github.com/evmos/os/ante"
-	evmosevmante "github.com/evmos/os/ante/evm"
-	evmosencoding "github.com/evmos/os/encoding"
-	srvflags "github.com/evmos/os/server/flags"
-	evmostypes "github.com/evmos/os/types"
-	evmosutils "github.com/evmos/os/utils"
-	"github.com/evmos/os/x/erc20"
-	erc20keeper "github.com/evmos/os/x/erc20/keeper"
-	erc20types "github.com/evmos/os/x/erc20/types"
-	"github.com/evmos/os/x/evm"
-	_ "github.com/evmos/os/x/evm/core/tracers/js"
-	_ "github.com/evmos/os/x/evm/core/tracers/native"
-	"github.com/evmos/os/x/evm/core/vm"
-	evmkeeper "github.com/evmos/os/x/evm/keeper"
-	evmtypes "github.com/evmos/os/x/evm/types"
-	"github.com/evmos/os/x/feemarket"
-	feemarketkeeper "github.com/evmos/os/x/feemarket/keeper"
-	feemarkettypes "github.com/evmos/os/x/feemarket/types"
+	evmosante "github.com/cosmos/evm/ante"
+	evmosevmante "github.com/cosmos/evm/ante/evm"
+	evmosencoding "github.com/cosmos/evm/encoding"
+	srvflags "github.com/cosmos/evm/server/flags"
+	evmostypes "github.com/cosmos/evm/types"
+	evmosutils "github.com/cosmos/evm/utils"
+	"github.com/cosmos/evm/x/erc20"
+	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
+	erc20types "github.com/cosmos/evm/x/erc20/types"
+	"github.com/cosmos/evm/x/feemarket"
+	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
+	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	evm "github.com/cosmos/evm/x/vm"
+	_ "github.com/cosmos/evm/x/vm/core/tracers/js"
+	_ "github.com/cosmos/evm/x/vm/core/tracers/native"
+	"github.com/cosmos/evm/x/vm/core/vm"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
 	chainante "github.com/rollchains/testevm/app/ante"
 )
 
@@ -630,7 +630,7 @@ func NewChainApp(
 
 	app.GovKeeper = *govKeeper.SetHooks(
 		govtypes.NewMultiGovHooks(
-		// register the governance hooks
+			// register the governance hooks
 		),
 	)
 

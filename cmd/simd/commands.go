@@ -31,11 +31,11 @@ import (
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
-	evmosserverconfig "github.com/evmos/os/server/config"
+	evmosserverconfig "github.com/cosmos/evm/server/config"
 
-	evmoscmd "github.com/evmos/os/client"
-	evmosserver "github.com/evmos/os/server"
-	srvflags "github.com/evmos/os/server/flags"
+	evmoscmd "github.com/cosmos/evm/client"
+	evmosserver "github.com/cosmos/evm/server"
+	srvflags "github.com/cosmos/evm/server/flags"
 )
 
 // initCometBFTConfig helps to override default CometBFT Config values.

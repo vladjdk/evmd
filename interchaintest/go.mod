@@ -1,8 +1,6 @@
 module github.com/rollchains/testevm/interchaintest
 
-go 1.23.0
-
-toolchain go1.23.1
+go 1.23.6
 
 replace (
 	// not tagged properly (SDK v51)
@@ -24,14 +22,13 @@ replace (
 	cosmossdk.io/store => github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe
 	github.com/cosmos/cosmos-sdk => github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5
 	github.com/ethereum/go-ethereum => github.com/evmos/go-ethereum v1.10.26-evmos-rc4
-	github.com/evmos/os => github.com/strangelove-ventures/os v0.1.0
 )
 
 require (
 	cosmossdk.io/math v1.5.0
-	github.com/cosmos/cosmos-sdk v0.50.11
-	github.com/cosmos/ibc-go/v8 v8.5.2
-	github.com/evmos/os v0.0.0-00010101000000-000000000000
+	github.com/cosmos/cosmos-sdk v0.50.13
+	github.com/cosmos/evm v0.1.0
+	github.com/cosmos/ibc-go/v8 v8.7.0
 	github.com/strangelove-ventures/interchaintest/v8 v8.8.1
 	github.com/strangelove-ventures/poa v0.50.3
 	github.com/strangelove-ventures/tokenfactory v0.50.3
@@ -106,7 +103,7 @@ require (
 	github.com/cosmos/ibc-go/modules/capability v1.0.1 // indirect
 	github.com/cosmos/ics23/go v0.11.0 // indirect
 	github.com/cosmos/interchain-security/v5 v5.1.1 // indirect
-	github.com/cosmos/ledger-cosmos-go v0.13.3 // indirect
+	github.com/cosmos/ledger-cosmos-go v0.14.0 // indirect
 	github.com/danieljoos/wincred v1.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set v1.8.0 // indirect
@@ -140,7 +137,7 @@ require (
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.3 // indirect
-	github.com/golang/glog v1.2.3 // indirect
+	github.com/golang/glog v1.2.4 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect

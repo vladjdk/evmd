@@ -19,7 +19,7 @@ import (
 	txmodule "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
-	evmoskeyring "github.com/evmos/os/crypto/keyring"
+	evmoskeyring "github.com/cosmos/evm/crypto/keyring"
 	"github.com/rollchains/testevm/app"
 	"github.com/rollchains/testevm/app/params"
 )
