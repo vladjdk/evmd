@@ -2,7 +2,7 @@
     "chains": [
         {
             "name": "testevm",
-            "chain_id": "localchain-1",
+            "chain_id": "localchain_9000-1",
             "docker_image": {
                 "repository": "testevm",
                 "version": "local",
@@ -33,26 +33,26 @@
                     {
                         "name": "acc0",
                         "amount": "25000000000%DENOM%",
-                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
                     },
                     {
                         "name": "acc1",
                         "amount": "24000000000%DENOM%",
-                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
                     },
                     {
                         "name": "user0",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos1x7ymuxr2jyef2rguulyt0rh0hurh2ujkp8kt62",
-                        "mnemonic": "thrive long crack where blossom bunker predict point crater plug cupboard balance you fine modify sorry copy grow sand mutual learn usage car taste"
+                        "address": "cosmos1dv2h9a7en6ndg6tjcyan6c8mqulq9xtvdw45es",
+                        "mnemonic": "feature coin pretty cat predict enact report surface idle verb solid fold waste exile extend circle media right bicycle fever system pool coyote author"
                     },
                     {
                         "name": "user1",
                         "amount": "100000%DENOM%",
-                        "address": "cosmos1uuyfmw0zylqe4xnw2pwu029t6gmzzplk2uuq5w",
-                        "mnemonic": "relax message shed spend myth flee spice wreck public friend dust scorpion wisdom marriage ribbon visa language matrix tennis nice evoke dwarf prosper sponsor"
+                        "address": "cosmos1agash0q6c508wpkcts2vnhsaajuxd3l6keejxy",
+                        "mnemonic": "hire actor quick people reduce curious pluck hospital short fresh input dizzy job coil alley dove welcome island debris whale pony during orphan satisfy"
                     }
                 ]
             },
@@ -75,7 +75,7 @@
             "number_vals": 1,
             "number_node": 0,
             "chain_type": "cosmos",
-            "coin_type": 118,
+            "coin_type": 60,
             "binary": "simd",
             "bech32_prefix": "cosmos",
             "denom": "token",

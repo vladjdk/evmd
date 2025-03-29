@@ -28,6 +28,7 @@ func MakeEncodingConfig(t testing.TB) params.EncodingConfig {
 		nil,
 		true,
 		simtestutil.NewAppOptionsWithFlagHome(t.TempDir()),
+		EVMAppOptions,
 	)
 	return makeEncodingConfig(tempApp)
 }

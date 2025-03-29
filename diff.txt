@@ -1,0 +1,2300 @@
+diff --git a/.github/workflows/interchaintest-e2e.yml b/.github/workflows/interchaintest-e2e.yml
+index 7a140ef..ca6a9fa 100755
+--- a/.github/workflows/interchaintest-e2e.yml
++++ b/.github/workflows/interchaintest-e2e.yml
+@@ -78,6 +78,8 @@ jobs:
+           - "ictest-basic"
+           - "ictest-poa"
+           - "ictest-tokenfactory"
++          - "ictest-ibc"  #
++          - "ictest-packetforward"  #
+       fail-fast: false
+ 
+     steps:
+diff --git a/Makefile b/Makefile
+index d3f2e15..ab62ac7 100755
+--- a/Makefile
++++ b/Makefile
+@@ -297,7 +297,7 @@ setup-testnet: mod-tidy is-localic-installed install local-image set-testnet-con
+ # Run this before testnet keys are added
+ # This chain id is used in the testnet.json as well
+ set-testnet-configs:
+-	simd config set client chain-id localchain_9000-1
++	simd config set client chain-id localchain-1
+ 	simd config set client keyring-backend test
+ 	simd config set client output text
+ 
+@@ -310,7 +310,7 @@ testnet: setup-testnet
+ 	spawn local-ic start testnet
+ 
+ sh-testnet: mod-tidy
+-	CHAIN_ID="localchain_9000-1" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
++	CHAIN_ID="localchain-1" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
+ 
+ .PHONY: setup-testnet set-testnet-configs testnet testnet-basic sh-testnet
+ 
+diff --git a/app/ante/ante.go b/app/ante/ante.go
+index 5698e80..c8386b2 100755
+--- a/app/ante/ante.go
++++ b/app/ante/ante.go
+@@ -4,7 +4,6 @@ import (
+ 	errorsmod "cosmossdk.io/errors"
+ 	sdk "github.com/cosmos/cosmos-sdk/types"
+ 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
+-	authante "github.com/cosmos/cosmos-sdk/x/auth/ante"
+ )
+ 
+ // NewAnteHandler returns an ante handler responsible for attempting to route an
+@@ -17,28 +16,6 @@ func NewAnteHandler(options HandlerOptions) sdk.AnteHandler {
+ 	) (newCtx sdk.Context, err error) {
+ 		var anteHandler sdk.AnteHandler
+ 
+-		txWithExtensions, ok := tx.(authante.HasExtensionOptionsTx)
+-		if ok {
+-			opts := txWithExtensions.GetExtensionOptions()
+-			if len(opts) > 0 {
+-				switch typeURL := opts[0].GetTypeUrl(); typeURL {
+-				case "/os.evm.v1.ExtensionOptionsEthereumTx":
+-					// handle as *evmtypes.MsgEthereumTx
+-					anteHandler = newMonoEVMAnteHandler(options)
+-				case "/os.types.v1.ExtensionOptionDynamicFeeTx":
+-					// cosmos-sdk tx with dynamic fee extension
+-					anteHandler = NewCosmosAnteHandler(options)
+-				default:
+-					return ctx, errorsmod.Wrapf(
+-						errortypes.ErrUnknownExtensionOptions,
+-						"rejecting tx with unsupported extension option: %s", typeURL,
+-					)
+-				}
+-
+-				return anteHandler(ctx, tx, sim)
+-			}
+-		}
+-
+ 		// handle as totally normal Cosmos SDK tx
+ 		switch tx.(type) {
+ 		case sdk.Tx:
+diff --git a/app/ante/ante_cosmos.go b/app/ante/ante_cosmos.go
+index 2b8e143..e4ffe51 100755
+--- a/app/ante/ante_cosmos.go
++++ b/app/ante/ante_cosmos.go
+@@ -3,10 +3,6 @@ package ante
+ import (
+ 	sdk "github.com/cosmos/cosmos-sdk/types"
+ 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
+-	sdkvesting "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+-	evmoscosmosante "github.com/cosmos/evm/ante/cosmos"
+-	evmante "github.com/cosmos/evm/ante/evm"
+-	evmtypes "github.com/cosmos/evm/x/vm/types"
+ 
+ 	sdkmath "cosmossdk.io/math"
+ 	circuitante "cosmossdk.io/x/circuit/ante"
+@@ -21,19 +17,12 @@ func NewCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
+ 	poaRateCeil := sdkmath.LegacyMustNewDecFromStr("0.50")
+ 
+ 	return sdk.ChainAnteDecorators(
+-		evmoscosmosante.NewRejectMessagesDecorator(), // reject MsgEthereumTxs
+-		evmoscosmosante.NewAuthzLimiterDecorator( // disable the Msg types that cannot be included on an authz.MsgExec msgs field
+-			sdk.MsgTypeURL(&evmtypes.MsgEthereumTx{}),
+-			sdk.MsgTypeURL(&sdkvesting.MsgCreateVestingAccount{}),
+-		),
+-
+ 		ante.NewSetUpContextDecorator(),
+ 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
+ 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
+ 		ante.NewValidateBasicDecorator(),
+ 		ante.NewTxTimeoutHeightDecorator(),
+ 		ante.NewValidateMemoDecorator(options.AccountKeeper),
+-		evmoscosmosante.NewMinGasPriceDecorator(options.FeeMarketKeeper, options.EvmKeeper),
+ 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+ 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, options.TxFeeChecker),
+ 		// SetPubKeyDecorator must be called before all signature verification decorators
+@@ -43,7 +32,6 @@ func NewCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
+ 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+ 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
+ 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
+-		evmante.NewGasWantedDecorator(options.EvmKeeper, options.FeeMarketKeeper),
+ 		poaante.NewPOADisableStakingDecorator(),
+ 		poaante.NewPOADisableWithdrawDelegatorRewards(),
+ 		poaante.NewCommissionLimitDecorator(poaDoGenTxRateValidation, poaRateFloor, poaRateCeil),
+diff --git a/app/ante/ante_evm.go b/app/ante/ante_evm.go
+deleted file mode 100755
+index 27e34e0..0000000
+--- a/app/ante/ante_evm.go
++++ /dev/null
+@@ -1,18 +0,0 @@
+-package ante
+-
+-import (
+-	sdk "github.com/cosmos/cosmos-sdk/types"
+-	evmante "github.com/cosmos/evm/ante/evm"
+-)
+-
+-// newMonoEVMAnteHandler creates the sdk.AnteHandler implementation for the EVM transactions.
+-func newMonoEVMAnteHandler(options HandlerOptions) sdk.AnteHandler {
+-	return sdk.ChainAnteDecorators(
+-		evmante.NewEVMMonoDecorator(
+-			options.AccountKeeper,
+-			options.FeeMarketKeeper,
+-			options.EvmKeeper,
+-			options.MaxTxGasWanted,
+-		),
+-	)
+-}
+diff --git a/app/ante/handler_options.go b/app/ante/handler_options.go
+index 9881d93..5536c39 100755
+--- a/app/ante/handler_options.go
++++ b/app/ante/handler_options.go
+@@ -15,7 +15,6 @@ import (
+ 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
+ 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+ 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
+-	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
+ )
+ 
+ // BankKeeper defines the contract needed for supply related APIs (noalias)
+@@ -48,10 +47,6 @@ type HandlerOptions struct {
+ 	SigGasConsumer         func(meter storetypes.GasMeter, sig signing.SignatureV2, params authtypes.Params) error
+ 	TxFeeChecker           ante.TxFeeChecker // safe to be nil
+ 
+-	MaxTxGasWanted  uint64
+-	FeeMarketKeeper anteinterfaces.FeeMarketKeeper
+-	EvmKeeper       anteinterfaces.EVMKeeper
+-
+ 	IBCKeeper     *ibckeeper.Keeper
+ 	CircuitKeeper *circuitkeeper.Keeper
+ }
+@@ -77,15 +72,5 @@ func (options HandlerOptions) Validate() error {
+ 		return errorsmod.Wrap(errortypes.ErrLogic, "circuit keeper is required for ante builder")
+ 	}
+ 
+-	if options.TxFeeChecker == nil {
+-		return errorsmod.Wrap(errortypes.ErrLogic, "tx fee checker is required for AnteHandler")
+-	}
+-	if options.FeeMarketKeeper == nil {
+-		return errorsmod.Wrap(errortypes.ErrLogic, "fee market keeper is required for AnteHandler")
+-	}
+-	if options.EvmKeeper == nil {
+-		return errorsmod.Wrap(errortypes.ErrLogic, "evm keeper is required for AnteHandler")
+-	}
+-
+ 	return nil
+ }
+diff --git a/app/app.go b/app/app.go
+index 81711be..f18f72c 100755
+--- a/app/app.go
++++ b/app/app.go
+@@ -4,7 +4,6 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
+-	"math/big"
+ 	"os"
+ 	"sort"
+ 	"strings"
+@@ -29,6 +28,8 @@ import (
+ 	ibcfeekeeper "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/keeper"
+ 	ibcfeetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
+ 
++	"github.com/cosmos/ibc-go/v8/modules/apps/transfer"
++	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
+ 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+ 	ibc "github.com/cosmos/ibc-go/v8/modules/core"
+ 	ibcclienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types" //nolint:staticcheck
+@@ -37,8 +38,6 @@ import (
+ 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
+ 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
+ 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+-	transfer "github.com/cosmos/evm/x/ibc/transfer"
+-	ibctransferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
+ 	"github.com/spf13/cast"
+ 
+ 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+@@ -46,7 +45,6 @@ import (
+ 	"cosmossdk.io/client/v2/autocli"
+ 	"cosmossdk.io/core/appmodule"
+ 	"cosmossdk.io/log"
+-	"cosmossdk.io/math"
+ 	storetypes "cosmossdk.io/store/types"
+ 	"cosmossdk.io/x/circuit"
+ 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+@@ -78,6 +76,7 @@ import (
+ 	"github.com/cosmos/cosmos-sdk/server/config"
+ 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+ 
++	"github.com/cosmos/cosmos-sdk/std"
+ 	sdk "github.com/cosmos/cosmos-sdk/types"
+ 	"github.com/cosmos/cosmos-sdk/types/module"
+ 	"github.com/cosmos/cosmos-sdk/types/msgservice"
+@@ -147,24 +146,7 @@ import (
+ 	"github.com/cosmos/cosmos-sdk/x/gov"
+ 	"github.com/cosmos/cosmos-sdk/x/staking"
+ 
+-	evmosante "github.com/cosmos/evm/ante"
+-	evmosevmante "github.com/cosmos/evm/ante/evm"
+-	evmosencoding "github.com/cosmos/evm/encoding"
+-	srvflags "github.com/cosmos/evm/server/flags"
+-	evmostypes "github.com/cosmos/evm/types"
+-	evmosutils "github.com/cosmos/evm/utils"
+-	"github.com/cosmos/evm/x/erc20"
+-	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
+-	erc20types "github.com/cosmos/evm/x/erc20/types"
+-	"github.com/cosmos/evm/x/vm"
+-	_ "github.com/cosmos/evm/x/vm/core/tracers/js"
+-	_ "github.com/cosmos/evm/x/vm/core/tracers/native"
+-	"github.com/cosmos/evm/x/vm/core/vm"
+-	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+-	evmtypes "github.com/cosmos/evm/x/vm/types"
+-	"github.com/cosmos/evm/x/feemarket"
+-	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
+-	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
++	authante "github.com/cosmos/cosmos-sdk/x/auth/ante"
+ 	chainante "github.com/rollchains/testevm/app/ante"
+ )
+ 
+@@ -172,8 +154,7 @@ const (
+ 	appName      = "testevm"
+ 	NodeDir      = ".testevm"
+ 	Bech32Prefix = "cosmos"
+-
+-	ChainID = "localchain_9000-1"
++	ChainID      = "localchain-1"
+ )
+ 
+ var (
+@@ -187,11 +168,6 @@ var (
+ 		}, ",")
+ )
+ 
+-func init() {
+-	// manually update the power reduction based on the base denom unit (10^18 [evm] or 10^6 [cosmos])
+-	sdk.DefaultPowerReduction = math.NewIntFromBigInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(BaseDenomUnit), nil))
+-}
+-
+ // These constants are derived from the above variables.
+ // These are the ones we will want to use in the code, based on
+ // any overrides above
+@@ -199,9 +175,9 @@ var (
+ 	// DefaultNodeHome default home directories for appd
+ 	DefaultNodeHome = os.ExpandEnv("$HOME/") + NodeDir
+ 
+-	CoinType uint32 = 60
++	CoinType uint32 = 118
+ 
+-	BaseDenomUnit int64 = 18
++	BaseDenomUnit = 6
+ 
+ 	BaseDenom    = "token"
+ 	DisplayDenom = "MY_DENOM_DISPLAY" // TODO: ?
+@@ -234,9 +210,6 @@ var maccPerms = map[string][]string{
+ 	ibcfeetypes.ModuleName:       nil,
+ 	icatypes.ModuleName:          nil,
+ 	tokenfactorytypes.ModuleName: {authtypes.Minter, authtypes.Burner},
+-	evmtypes.ModuleName:          {authtypes.Minter, authtypes.Burner},
+-	feemarkettypes.ModuleName:    nil,
+-	erc20types.ModuleName:        {authtypes.Minter, authtypes.Burner},
+ }
+ 
+ var (
+@@ -287,9 +260,6 @@ type ChainApp struct {
+ 	TokenFactoryKeeper  tokenfactorykeeper.Keeper
+ 	POAKeeper           poakeeper.Keeper
+ 	PacketForwardKeeper *packetforwardkeeper.Keeper
+-	FeeMarketKeeper     feemarketkeeper.Keeper
+-	EVMKeeper           *evmkeeper.Keeper
+-	Erc20Keeper         erc20keeper.Keeper
+ 
+ 	ScopedIBCKeeper           capabilitykeeper.ScopedKeeper
+ 	ScopedICAHostKeeper       capabilitykeeper.ScopedKeeper
+@@ -316,17 +286,16 @@ func NewChainApp(
+ 	traceStore io.Writer,
+ 	loadLatest bool,
+ 	appOpts servertypes.AppOptions,
+-	evmosAppOptions EVMOptionsFn,
+ 	baseAppOptions ...func(*baseapp.BaseApp),
+ ) *ChainApp {
+ 
+ 	// TODO: verify
+-
+-	encodingConfig := evmosencoding.MakeConfig()
+-	interfaceRegistry := encodingConfig.InterfaceRegistry
+-	appCodec := encodingConfig.Codec
+-	legacyAmino := encodingConfig.Amino
+-	txConfig := encodingConfig.TxConfig
++	interfaceRegistry := GetInterfaceRegistry()
++	appCodec := codec.NewProtoCodec(interfaceRegistry)
++	legacyAmino := codec.NewLegacyAmino()
++	txConfig := authtx.NewTxConfig(appCodec, authtx.DefaultSignModes)
++	std.RegisterLegacyAminoCodec(legacyAmino)
++	std.RegisterInterfaces(interfaceRegistry)
+ 
+ 	// Below we could construct and set an application specific mempool and
+ 	// ABCI 1.0 PrepareProposal and ProcessProposal handlers. These defaults are
+@@ -370,11 +339,6 @@ func NewChainApp(
+ 
+ 	bApp.SetTxEncoder(txConfig.TxEncoder())
+ 
+-	if err := evmosAppOptions(bApp.ChainID()); err != nil {
+-		// initialize the EVM application configuration
+-		panic(fmt.Errorf("failed to initialize EVM app configuration: %w", err))
+-	}
+-
+ 	keys := storetypes.NewKVStoreKeys(
+ 		authtypes.StoreKey, banktypes.StoreKey,
+ 		stakingtypes.StoreKey,
+@@ -402,15 +366,10 @@ func NewChainApp(
+ 		tokenfactorytypes.StoreKey,
+ 		poa.StoreKey,
+ 		packetforwardtypes.StoreKey,
+-		evmtypes.StoreKey,
+-		feemarkettypes.StoreKey,
+-		erc20types.StoreKey,
+ 	)
+ 
+ 	tkeys := storetypes.NewTransientStoreKeys(
+ 		paramstypes.TStoreKey,
+-		evmtypes.TransientKey,
+-		feemarkettypes.TransientKey,
+ 	)
+ 	memKeys := storetypes.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
+ 
+@@ -653,61 +612,6 @@ func NewChainApp(
+ 	// If evidence needs to be handled for the app, set routes in router here and seal
+ 	app.EvidenceKeeper = *evidenceKeeper
+ 
+-	app.FeeMarketKeeper = feemarketkeeper.NewKeeper(
+-		appCodec,
+-		authtypes.NewModuleAddress(govtypes.ModuleName),
+-		keys[feemarkettypes.StoreKey],
+-		tkeys[feemarkettypes.TransientKey],
+-		app.GetSubspace(feemarkettypes.ModuleName),
+-	)
+-
+-	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
+-
+-	// NOTE: it's required to set up the EVM keeper before the ERC-20 keeper, because it is used in its instantiation.
+-	app.EVMKeeper = evmkeeper.NewKeeper(
+-		appCodec,
+-		keys[evmtypes.StoreKey],
+-		tkeys[evmtypes.TransientKey],
+-		authtypes.NewModuleAddress(govtypes.ModuleName),
+-		app.AccountKeeper,
+-		app.BankKeeper,
+-		app.StakingKeeper,
+-		app.FeeMarketKeeper,
+-		&app.Erc20Keeper,
+-		tracer, app.GetSubspace(evmtypes.ModuleName),
+-	)
+-
+-	app.Erc20Keeper = erc20keeper.NewKeeper(
+-		keys[erc20types.StoreKey],
+-		appCodec,
+-		authtypes.NewModuleAddress(govtypes.ModuleName),
+-		app.AccountKeeper,
+-		app.BankKeeper,
+-		app.EVMKeeper,
+-		app.StakingKeeper,
+-		app.AuthzKeeper,
+-		&app.TransferKeeper,
+-	)
+-
+-	// NOTE: we are adding all available EVM extensions.
+-	// Not all of them need to be enabled, which can be configured on a per-chain basis.
+-	corePrecompiles := NewAvailableStaticPrecompiles(
+-		*app.StakingKeeper,
+-		app.DistrKeeper,
+-		app.BankKeeper,
+-		app.Erc20Keeper,
+-		app.AuthzKeeper, // TODO: get off fork so we can support this
+-		app.TransferKeeper,
+-		app.IBCKeeper.ChannelKeeper,
+-		app.EVMKeeper,
+-		app.GovKeeper,
+-		app.SlashingKeeper,
+-		app.EvidenceKeeper,
+-	)
+-	app.EVMKeeper.WithStaticPrecompiles(
+-		corePrecompiles,
+-	)
+-
+ 	// Create the tokenfactory keeper
+ 	app.TokenFactoryKeeper = tokenfactorykeeper.NewKeeper(
+ 		appCodec,
+@@ -758,7 +662,6 @@ func NewChainApp(
+ 		app.AccountKeeper,
+ 		app.BankKeeper,
+ 		scopedTransferKeeper,
+-		app.Erc20Keeper,
+ 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+ 	)
+ 
+@@ -884,9 +787,6 @@ func NewChainApp(
+ 		tokenfactory.NewAppModule(app.TokenFactoryKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(tokenfactorytypes.ModuleName)),
+ 		poamodule.NewAppModule(appCodec, app.POAKeeper),
+ 		packetforward.NewAppModule(app.PacketForwardKeeper, app.GetSubspace(packetforwardtypes.ModuleName)),
+-		evm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.GetSubspace(evmtypes.ModuleName)),
+-		feemarket.NewAppModule(app.FeeMarketKeeper, app.GetSubspace(feemarkettypes.ModuleName)),
+-		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper, app.GetSubspace(erc20types.ModuleName)),
+ 	)
+ 
+ 	// BasicModuleManager defines the module BasicManager is in charge of setting up basic,
+@@ -912,10 +812,6 @@ func NewChainApp(
+ 	// NOTE: capability module's beginblocker must come before any modules using capabilities (e.g. IBC)
+ 	app.ModuleManager.SetOrderBeginBlockers(
+ 		minttypes.ModuleName,
+-		erc20types.ModuleName,
+-		feemarkettypes.ModuleName,
+-		evmtypes.ModuleName, // NOTE: EVM BeginBlocker must come after FeeMarket BeginBlocker
+-
+ 		distrtypes.ModuleName,
+ 		slashingtypes.ModuleName,
+ 		evidencetypes.ModuleName,
+@@ -942,7 +838,6 @@ func NewChainApp(
+ 		feegrant.ModuleName,
+ 		group.ModuleName,
+ 		// additional non simd modules
+-		evmtypes.ModuleName, erc20types.ModuleName, feemarkettypes.ModuleName,
+ 		capabilitytypes.ModuleName,
+ 		ibctransfertypes.ModuleName,
+ 		ibcexported.ModuleName,
+@@ -970,12 +865,6 @@ func NewChainApp(
+ 		slashingtypes.ModuleName,
+ 		govtypes.ModuleName,
+ 		minttypes.ModuleName,
+-		// NOTE: feemarket module needs to be initialized before genutil module:
+-		// gentx transactions use MinGasPriceDecorator.AnteHandle
+-		evmtypes.ModuleName,
+-		feemarkettypes.ModuleName,
+-		erc20types.ModuleName,
+-
+ 		crisistypes.ModuleName,
+ 		genutiltypes.ModuleName,
+ 		evidencetypes.ModuleName,
+@@ -1052,16 +941,10 @@ func NewChainApp(
+ 		AccountKeeper:   app.AccountKeeper,
+ 		BankKeeper:      app.BankKeeper,
+ 		FeegrantKeeper:  app.FeeGrantKeeper,
+-		FeeMarketKeeper: app.FeeMarketKeeper,
+ 		SignModeHandler: txConfig.SignModeHandler(),
+ 		IBCKeeper:       app.IBCKeeper,
+ 		CircuitKeeper:   &app.CircuitKeeper,
+-
+-		EvmKeeper:              app.EVMKeeper,
+-		ExtensionOptionChecker: evmostypes.HasDynamicFeeExtensionOption,
+-		SigGasConsumer:         evmosante.SigVerificationGasConsumer,
+-		MaxTxGasWanted:         cast.ToUint64(appOpts.Get(srvflags.EVMMaxTxGasWanted)),
+-		TxFeeChecker:           evmosevmante.NewDynamicFeeChecker(app.FeeMarketKeeper),
++		SigGasConsumer:  authante.DefaultSigVerificationGasConsumer,
+ 	})
+ 
+ 	// must be before Loading version
+@@ -1184,8 +1067,7 @@ func (a *ChainApp) Configurator() module.Configurator {
+ 
+ // InitChainer application update at chain initialization
+ func (app *ChainApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+-
+-	var genesisState evmostypes.GenesisState
++	var genesisState GenesisState
+ 	if err := json.Unmarshal(req.AppStateBytes, &genesisState); err != nil {
+ 		panic(err)
+ 	}
+@@ -1253,21 +1135,6 @@ func (app *ChainApp) AutoCliOpts() autocli.AppOptions {
+ func (a *ChainApp) DefaultGenesis() map[string]json.RawMessage {
+ 	genesis := a.BasicModuleManager.DefaultGenesis(a.appCodec)
+ 
+-	mintGenState := minttypes.DefaultGenesisState()
+-	mintGenState.Params.MintDenom = BaseDenom
+-	genesis[minttypes.ModuleName] = a.appCodec.MustMarshalJSON(mintGenState)
+-
+-	evmGenState := evmtypes.DefaultGenesisState()
+-	evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+-	genesis[evmtypes.ModuleName] = a.appCodec.MustMarshalJSON(evmGenState)
+-
+-	// NOTE: for the example chain implementation we are also adding a default token pair,
+-	// which is the base denomination of the chain (i.e. the WTOKEN contract)
+-	erc20GenState := erc20types.DefaultGenesisState()
+-	erc20GenState.TokenPairs = ExampleTokenPairs
+-	erc20GenState.Params.NativePrecompiles = append(erc20GenState.Params.NativePrecompiles, WTokenContractMainnet)
+-	genesis[erc20types.ModuleName] = a.appCodec.MustMarshalJSON(erc20GenState)
+-
+ 	return genesis
+ }
+ 
+@@ -1382,15 +1249,6 @@ func BlockedAddresses() map[string]bool {
+ 	// allow the following addresses to receive funds
+ 	delete(blockedAddrs, authtypes.NewModuleAddress(govtypes.ModuleName).String())
+ 
+-	blockedPrecompilesHex := evmtypes.AvailableStaticPrecompiles
+-	for _, addr := range vm.PrecompiledAddressesBerlin {
+-		blockedPrecompilesHex = append(blockedPrecompilesHex, addr.Hex())
+-	}
+-
+-	for _, precompile := range blockedPrecompilesHex {
+-		blockedAddrs[evmosutils.EthHexToCosmosAddr(precompile).String()] = true
+-	}
+-
+ 	return blockedAddrs
+ }
+ 
+@@ -1421,9 +1279,5 @@ func initParamsKeeper(appCodec codec.BinaryCodec, legacyAmino *codec.LegacyAmino
+ 	paramsKeeper.Subspace(poa.ModuleName)
+ 	paramsKeeper.Subspace(packetforwardtypes.ModuleName)
+ 
+-	paramsKeeper.Subspace(evmtypes.ModuleName)
+-	paramsKeeper.Subspace(feemarkettypes.ModuleName)
+-	paramsKeeper.Subspace(erc20types.ModuleName)
+-
+ 	return paramsKeeper
+ }
+diff --git a/app/app_test.go b/app/app_test.go
+index df59af8..91fc118 100755
+--- a/app/app_test.go
++++ b/app/app_test.go
+@@ -36,7 +36,6 @@ func TestAppExport(t *testing.T) {
+ 	// Making a new app object with the db, so that initchain hasn't been called
+ 	newGapp := NewChainApp(
+ 		logger, db, nil, true, simtestutil.NewAppOptionsWithFlagHome(t.TempDir()),
+-		EVMAppOptions,
+ 	)
+ 	_, err = newGapp.ExportAppStateAndValidators(false, []string{}, nil)
+ 	require.NoError(t, err, "ExportAppStateAndValidators should not have an error")
+diff --git a/app/config.go b/app/config.go
+deleted file mode 100755
+index 2260580..0000000
+--- a/app/config.go
++++ /dev/null
+@@ -1,91 +0,0 @@
+-package app
+-
+-import (
+-	"fmt"
+-	"strings"
+-
+-	"cosmossdk.io/math"
+-	sdk "github.com/cosmos/cosmos-sdk/types"
+-	evmtypes "github.com/cosmos/evm/x/vm/types"
+-)
+-
+-// EVMOptionsFn defines a function type for setting app options specifically for
+-// the app. The function should receive the chainID and return an error if
+-// any.
+-type EVMOptionsFn func(string) error
+-
+-// NoOpEVMOptions is a no-op function that can be used when the app does not
+-// need any specific configuration.
+-func NoOpEVMOptions(_ string) error {
+-	return nil
+-}
+-
+-var sealed = false
+-
+-// ChainsCoinInfo is a map of the chain id and its corresponding EvmCoinInfo
+-// that allows initializing the app with different coin info based on the
+-// chain id
+-var ChainsCoinInfo = map[string]evmtypes.EvmCoinInfo{
+-	ChainID: {
+-		Denom:        BaseDenom,
+-		DisplayDenom: DisplayDenom,
+-		Decimals:     evmtypes.EighteenDecimals,
+-	},
+-}
+-
+-// EVMAppOptions allows to setup the global configuration
+-// for the chain.
+-func EVMAppOptions(chainID string) error {
+-	if sealed {
+-		return nil
+-	}
+-
+-	if chainID == "" {
+-		chainID = ChainID
+-	}
+-
+-	id := strings.Split(chainID, "-")[0]
+-	coinInfo, found := ChainsCoinInfo[id]
+-	if !found {
+-		coinInfo, found = ChainsCoinInfo[chainID]
+-		if !found {
+-			return fmt.Errorf("unknown chain id: %s, %+v", chainID, ChainsCoinInfo)
+-		}
+-	}
+-
+-	// set the denom info for the chain
+-	if err := setBaseDenom(coinInfo); err != nil {
+-		return err
+-	}
+-
+-	baseDenom, err := sdk.GetBaseDenom()
+-	if err != nil {
+-		return err
+-	}
+-
+-	ethCfg := evmtypes.DefaultChainConfig(chainID)
+-
+-	err = evmtypes.NewEVMConfigurator().
+-		WithChainConfig(ethCfg).
+-		// NOTE: we're using the 18 decimals
+-		WithEVMCoinInfo(baseDenom, uint8(coinInfo.Decimals)).
+-		Configure()
+-	if err != nil {
+-		return err
+-	}
+-
+-	sealed = true
+-	return nil
+-}
+-
+-// setBaseDenom registers the display denom and base denom and sets the
+-// base denom for the chain.
+-func setBaseDenom(ci evmtypes.EvmCoinInfo) error {
+-	if err := sdk.RegisterDenom(ci.DisplayDenom, math.LegacyOneDec()); err != nil {
+-		return err
+-	}
+-
+-	// sdk.RegisterDenom will automatically overwrite the base denom when the
+-	// new setBaseDenom() are lower than the current base denom's units.
+-	return sdk.RegisterDenom(ci.Denom, math.LegacyNewDecWithPrec(1, int64(ci.Decimals)))
+-}
+diff --git a/app/encoding.go b/app/encoding.go
+index 3899c15..4361766 100755
+--- a/app/encoding.go
++++ b/app/encoding.go
+@@ -28,7 +28,6 @@ func MakeEncodingConfig(t testing.TB) params.EncodingConfig {
+ 		nil,
+ 		true,
+ 		simtestutil.NewAppOptionsWithFlagHome(t.TempDir()),
+-		EVMAppOptions,
+ 	)
+ 	return makeEncodingConfig(tempApp)
+ }
+diff --git a/app/precompiles.go b/app/precompiles.go
+deleted file mode 100755
+index eb0865e..0000000
+--- a/app/precompiles.go
++++ /dev/null
+@@ -1,120 +0,0 @@
+-package app
+-
+-import (
+-	"fmt"
+-	"maps"
+-
+-	evidencekeeper "cosmossdk.io/x/evidence/keeper"
+-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
+-	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+-	distributionkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+-	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+-	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
+-	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+-	channelkeeper "github.com/cosmos/ibc-go/v8/modules/core/04-channel/keeper"
+-	"github.com/ethereum/go-ethereum/common"
+-	bankprecompile "github.com/cosmos/evm/precompiles/bank"
+-	"github.com/cosmos/evm/precompiles/bech32"
+-	distprecompile "github.com/cosmos/evm/precompiles/distribution"
+-	evidenceprecompile "github.com/cosmos/evm/precompiles/evidence"
+-	govprecompile "github.com/cosmos/evm/precompiles/gov"
+-	ics20precompile "github.com/cosmos/evm/precompiles/ics20"
+-	"github.com/cosmos/evm/precompiles/p256"
+-	slashingprecompile "github.com/cosmos/evm/precompiles/slashing"
+-	stakingprecompile "github.com/cosmos/evm/precompiles/staking"
+-	erc20Keeper "github.com/cosmos/evm/x/erc20/keeper"
+-	"github.com/cosmos/evm/x/vm/core/vm"
+-	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+-	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
+-)
+-
+-const bech32PrecompileBaseGas = 6_000
+-
+-// NewAvailableStaticPrecompiles returns the list of all available static precompiled contracts from EVM.
+-//
+-// NOTE: this should only be used during initialization of the Keeper.
+-func NewAvailableStaticPrecompiles(
+-	stakingKeeper stakingkeeper.Keeper,
+-	distributionKeeper distributionkeeper.Keeper,
+-	bankKeeper bankkeeper.Keeper,
+-	erc20Keeper erc20Keeper.Keeper,
+-	authzKeeper authzkeeper.Keeper,
+-	transferKeeper transferkeeper.Keeper,
+-	channelKeeper channelkeeper.Keeper,
+-	evmKeeper *evmkeeper.Keeper,
+-	govKeeper govkeeper.Keeper,
+-	slashingKeeper slashingkeeper.Keeper,
+-	evidenceKeeper evidencekeeper.Keeper,
+-) map[common.Address]vm.PrecompiledContract {
+-	// Clone the mapping from the latest EVM fork.
+-	precompiles := maps.Clone(vm.PrecompiledContractsBerlin)
+-
+-	// secp256r1 precompile as per EIP-7212
+-	p256Precompile := &p256.Precompile{}
+-
+-	bech32Precompile, err := bech32.NewPrecompile(bech32PrecompileBaseGas)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate bech32 precompile: %w", err))
+-	}
+-
+-	stakingPrecompile, err := stakingprecompile.NewPrecompile(stakingKeeper, authzKeeper)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate staking precompile: %w", err))
+-	}
+-
+-	distributionPrecompile, err := distprecompile.NewPrecompile(
+-		distributionKeeper,
+-		stakingKeeper,
+-		authzKeeper,
+-		evmKeeper,
+-	)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate distribution precompile: %w", err))
+-	}
+-
+-	ibcTransferPrecompile, err := ics20precompile.NewPrecompile(
+-		stakingKeeper,
+-		transferKeeper,
+-		channelKeeper,
+-		authzKeeper,
+-		evmKeeper,
+-	)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate ICS20 precompile: %w", err))
+-	}
+-
+-	bankPrecompile, err := bankprecompile.NewPrecompile(bankKeeper, erc20Keeper)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate bank precompile: %w", err))
+-	}
+-
+-	govPrecompile, err := govprecompile.NewPrecompile(govKeeper, authzKeeper)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate gov precompile: %w", err))
+-	}
+-
+-	slashingPrecompile, err := slashingprecompile.NewPrecompile(slashingKeeper, authzKeeper)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate slashing precompile: %w", err))
+-	}
+-
+-	evidencePrecompile, err := evidenceprecompile.NewPrecompile(evidenceKeeper, authzKeeper)
+-	if err != nil {
+-		panic(fmt.Errorf("failed to instantiate evidence precompile: %w", err))
+-	}
+-
+-	// Stateless precompiles
+-	precompiles[bech32Precompile.Address()] = bech32Precompile
+-	precompiles[p256Precompile.Address()] = p256Precompile
+-
+-	// Stateful precompiles
+-	precompiles[stakingPrecompile.Address()] = stakingPrecompile
+-	precompiles[distributionPrecompile.Address()] = distributionPrecompile
+-	precompiles[ibcTransferPrecompile.Address()] = ibcTransferPrecompile
+-	precompiles[bankPrecompile.Address()] = bankPrecompile
+-	precompiles[govPrecompile.Address()] = govPrecompile
+-	precompiles[slashingPrecompile.Address()] = slashingPrecompile
+-	precompiles[evidencePrecompile.Address()] = evidencePrecompile
+-
+-	return precompiles
+-}
+diff --git a/app/sim_test.go b/app/sim_test.go
+index d7143f0..a43b0ee 100755
+--- a/app/sim_test.go
++++ b/app/sim_test.go
+@@ -122,7 +122,6 @@ func TestAppImportExport(t *testing.T) {
+ 	}()
+ 
+ 	newApp := NewChainApp(log.NewNopLogger(), newDB, nil, true, appOptions,
+-		EVMAppOptions,
+ 		fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
+ 
+ 	initReq := &abci.RequestInitChain{
+@@ -237,7 +236,6 @@ func TestAppSimulationAfterImport(t *testing.T) {
+ 	}()
+ 
+ 	newApp := NewChainApp(log.NewNopLogger(), newDB, nil, true, appOptions,
+-		EVMAppOptions,
+ 		fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
+ 
+ 	_, err = newApp.InitChain(&abci.RequestInitChain{
+@@ -280,7 +278,6 @@ func setupSimulationApp(t *testing.T, msg string) (simtypes.Config, dbm.DB, simt
+ 	appOptions[server.FlagInvCheckPeriod] = simcli.FlagPeriodValue
+ 
+ 	app := NewChainApp(logger, db, nil, true, appOptions,
+-		EVMAppOptions,
+ 		fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
+ 	return config, db, appOptions, app
+ }
+@@ -333,7 +330,6 @@ func TestAppStateDeterminism(t *testing.T) {
+ 
+ 			db := dbm.NewMemDB()
+ 			app := NewChainApp(logger, db, nil, true, appOptions,
+-				EVMAppOptions,
+ 				interBlockCacheOpt(), baseapp.SetChainID(SimAppChainID))
+ 
+ 			fmt.Printf(
+diff --git a/app/test_helpers.go b/app/test_helpers.go
+index 39a1ec7..259f060 100755
+--- a/app/test_helpers.go
++++ b/app/test_helpers.go
+@@ -78,7 +78,6 @@ func setup(
+ 		nil,
+ 		true,
+ 		appOptions,
+-		EVMAppOptions,
+ 		bam.SetChainID(chainID),
+ 		bam.SetSnapshot(snapshotStore, snapshottypes.SnapshotOptions{KeepRecent: 2}),
+ 	)
+@@ -112,7 +111,6 @@ func NewChainAppWithCustomOptions(t *testing.T, isCheckTx bool, options SetupOpt
+ 		options.DB,
+ 		nil, true,
+ 		options.AppOpts,
+-		EVMAppOptions,
+ 	)
+ 	genesisState := app.DefaultGenesis()
+ 	genesisState, err = GenesisStateWithValSet(app.AppCodec(), genesisState, valSet, []authtypes.GenesisAccount{acc}, balance)
+@@ -292,14 +290,11 @@ func NewTestNetworkFixture() network.TestFixture {
+ 	}
+ 	defer os.RemoveAll(dir)
+ 
+-	app := NewChainApp(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.NewAppOptionsWithFlagHome(dir),
+-		EVMAppOptions,
+-	)
++	app := NewChainApp(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.NewAppOptionsWithFlagHome(dir))
+ 	appCtr := func(val network.ValidatorI) servertypes.Application {
+ 		return NewChainApp(
+ 			val.GetCtx().Logger, dbm.NewMemDB(), nil, true,
+ 			simtestutil.NewAppOptionsWithFlagHome(val.GetCtx().Config.RootDir),
+-			EVMAppOptions,
+ 			bam.SetPruning(pruningtypes.NewPruningOptionsFromString(val.GetAppConfig().Pruning)),
+ 			bam.SetMinGasPrices(val.GetAppConfig().MinGasPrices),
+ 			bam.SetChainID(val.GetCtx().Viper.GetString(flags.FlagChainID)),
+diff --git a/app/token_pair.go b/app/token_pair.go
+deleted file mode 100755
+index b9d3c8b..0000000
+--- a/app/token_pair.go
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package app
+-
+-import erc20types "github.com/cosmos/evm/x/erc20/types"
+-
+-// WTokenContractMainnet is the WrappedToken contract address for mainnet
+-const WTokenContractMainnet = "0xD4949664cD82660AaE99bEdc034a0deA8A0bd517"
+-
+-// ExampleTokenPairs creates a slice of token pairs, that contains a pair for the native denom of the example chain
+-// implementation.
+-var ExampleTokenPairs = []erc20types.TokenPair{
+-	{
+-		Erc20Address:  WTokenContractMainnet,
+-		Denom:         BaseDenom,
+-		Enabled:       true,
+-		ContractOwner: erc20types.OWNER_MODULE,
+-	},
+-}
+diff --git a/chain_registry.json b/chain_registry.json
+index 4fa4fa8..4b3f7c2 100644
+--- a/chain_registry.json
++++ b/chain_registry.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://raw.githubusercontent.com/cosmos/chain-registry/master/chain.schema.json",
+   "chain_name": "testevm",
+-  "chain_type": "ethereum",
++  "chain_type": "cosmos",
+   "status": "live",
+   "website": "https://example.com",
+   "network_type": "testnet",
+@@ -11,9 +11,9 @@
+   "daemon_name": "simd",
+   "node_home": "$HOME/.testevm",
+   "key_algos": [
+-    "eth_secp256k1"
++    "secp256k1"
+   ],
+-  "slip44": 60,
++  "slip44": 118,
+   "fees": {
+     "fee_tokens": [
+       {
+diff --git a/chain_registry_assets.json b/chain_registry_assets.json
+index 933a5c2..a06c1c1 100644
+--- a/chain_registry_assets.json
++++ b/chain_registry_assets.json
+@@ -11,7 +11,7 @@
+         },
+         {
+           "denom": "TOKEN",
+-          "exponent": 18
++          "exponent": 6
+         }
+       ],
+       "base": "token",
+diff --git a/chains/self-ibc.json b/chains/self-ibc.json
+index def66f6..a86eef1 100755
+--- a/chains/self-ibc.json
++++ b/chains/self-ibc.json
+@@ -2,7 +2,7 @@
+     "chains": [
+         {
+             "name": "testevm",
+-            "chain_id": "localchain_9000-1",
++            "chain_id": "localchain-1",
+             "docker_image": {
+                 "repository": "testevm",
+                 "version": "local",
+@@ -33,26 +33,26 @@
+                     {
+                         "name": "acc0",
+                         "amount": "25000000000%DENOM%",
+-                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
++                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
+                     },
+                     {
+                         "name": "acc1",
+                         "amount": "24000000000%DENOM%",
+-                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
++                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
+                     },
+                     {
+                         "name": "user0",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1dv2h9a7en6ndg6tjcyan6c8mqulq9xtvdw45es",
+-                        "mnemonic": "feature coin pretty cat predict enact report surface idle verb solid fold waste exile extend circle media right bicycle fever system pool coyote author"
++                        "address": "cosmos1x7ymuxr2jyef2rguulyt0rh0hurh2ujkp8kt62",
++                        "mnemonic": "thrive long crack where blossom bunker predict point crater plug cupboard balance you fine modify sorry copy grow sand mutual learn usage car taste"
+                     },
+                     {
+                         "name": "user1",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1agash0q6c508wpkcts2vnhsaajuxd3l6keejxy",
+-                        "mnemonic": "hire actor quick people reduce curious pluck hospital short fresh input dizzy job coil alley dove welcome island debris whale pony during orphan satisfy"
++                        "address": "cosmos1uuyfmw0zylqe4xnw2pwu029t6gmzzplk2uuq5w",
++                        "mnemonic": "relax message shed spend myth flee spice wreck public friend dust scorpion wisdom marriage ribbon visa language matrix tennis nice evoke dwarf prosper sponsor"
+                     }
+                 ]
+             },
+@@ -73,12 +73,12 @@
+                 }
+             ],
+             "ibc_paths": [
+-                "localchain_9000-1_localchain_9000-2"
++                "localchain-1_localchain-2"
+             ],
+             "number_vals": 1,
+             "number_node": 0,
+             "chain_type": "cosmos",
+-            "coin_type": 60,
++            "coin_type": 118,
+             "binary": "simd",
+             "bech32_prefix": "cosmos",
+             "denom": "token",
+@@ -95,7 +95,7 @@
+         },
+         {
+             "name": "testevm",
+-            "chain_id": "localchain_9000-2",
++            "chain_id": "localchain-2",
+             "docker_image": {
+                 "repository": "testevm",
+                 "version": "local",
+@@ -126,36 +126,36 @@
+                     {
+                         "name": "acc0",
+                         "amount": "25000000000%DENOM%",
+-                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
++                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
+                     },
+                     {
+                         "name": "acc1",
+                         "amount": "24000000000%DENOM%",
+-                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
++                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
+                     },
+                     {
+                         "name": "user0",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1hsu96fr2wmkgyfs066kkjlxc53n5f74fcndgn0",
+-                        "mnemonic": "enroll mutual tortoise smile rocket bottom chest ill round royal radar tape embody census tell wrestle chat deposit access evidence girl order vapor salmon"
++                        "address": "cosmos169rnae9gf88hkg655yazxcqaycsju7u5pqxwd0",
++                        "mnemonic": "dismiss now strategy assault own knock mango team chicken tail fade cereal lake rabbit letter wash skirt cattle detect bomb oval fitness initial rely"
+                     },
+                     {
+                         "name": "user1",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1rt57gqqcfrxzukhegkyew396z00d52c225ufup",
+-                        "mnemonic": "recall polar ancient phone media crash exhaust borrow shadow cart recycle bench clap rally distance asthma vapor miracle junk wish palm market vicious clever"
++                        "address": "cosmos1z35ecdgxkwpx86q4hhga0v39a7wgg3psu4xd2e",
++                        "mnemonic": "hello tenant dignity either rocket still chef moment love ticket secret seed slogan airport park hover report catch dutch mass eager winner join conduct"
+                     }
+                 ]
+             },
+             "ibc_paths": [
+-                "localchain_9000-1_localchain_9000-2"
++                "localchain-1_localchain-2"
+             ],
+             "number_vals": 1,
+             "number_node": 0,
+             "chain_type": "cosmos",
+-            "coin_type": 60,
++            "coin_type": 118,
+             "binary": "simd",
+             "bech32_prefix": "cosmos",
+             "denom": "token",
+diff --git a/chains/standalone.json b/chains/standalone.json
+index 37975ae..1c52774 100755
+--- a/chains/standalone.json
++++ b/chains/standalone.json
+@@ -2,7 +2,7 @@
+     "chains": [
+         {
+             "name": "testevm",
+-            "chain_id": "localchain_9000-1",
++            "chain_id": "localchain-1",
+             "docker_image": {
+                 "repository": "testevm",
+                 "version": "local",
+@@ -33,26 +33,26 @@
+                     {
+                         "name": "acc0",
+                         "amount": "25000000000%DENOM%",
+-                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
++                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
+                     },
+                     {
+                         "name": "acc1",
+                         "amount": "24000000000%DENOM%",
+-                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
++                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
+                     },
+                     {
+                         "name": "user0",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1dv2h9a7en6ndg6tjcyan6c8mqulq9xtvdw45es",
+-                        "mnemonic": "feature coin pretty cat predict enact report surface idle verb solid fold waste exile extend circle media right bicycle fever system pool coyote author"
++                        "address": "cosmos1x7ymuxr2jyef2rguulyt0rh0hurh2ujkp8kt62",
++                        "mnemonic": "thrive long crack where blossom bunker predict point crater plug cupboard balance you fine modify sorry copy grow sand mutual learn usage car taste"
+                     },
+                     {
+                         "name": "user1",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1agash0q6c508wpkcts2vnhsaajuxd3l6keejxy",
+-                        "mnemonic": "hire actor quick people reduce curious pluck hospital short fresh input dizzy job coil alley dove welcome island debris whale pony during orphan satisfy"
++                        "address": "cosmos1uuyfmw0zylqe4xnw2pwu029t6gmzzplk2uuq5w",
++                        "mnemonic": "relax message shed spend myth flee spice wreck public friend dust scorpion wisdom marriage ribbon visa language matrix tennis nice evoke dwarf prosper sponsor"
+                     }
+                 ]
+             },
+@@ -75,7 +75,7 @@
+             "number_vals": 1,
+             "number_node": 0,
+             "chain_type": "cosmos",
+-            "coin_type": 60,
++            "coin_type": 118,
+             "binary": "simd",
+             "bech32_prefix": "cosmos",
+             "denom": "token",
+diff --git a/chains/testnet.json b/chains/testnet.json
+index 064784f..340a629 100755
+--- a/chains/testnet.json
++++ b/chains/testnet.json
+@@ -2,7 +2,7 @@
+     "chains": [
+         {
+             "name": "testevm",
+-            "chain_id": "localchain_9000-1",
++            "chain_id": "localchain-1",
+             "docker_image": {
+                 "repository": "testevm",
+                 "version": "local",
+@@ -33,26 +33,26 @@
+                     {
+                         "name": "acc0",
+                         "amount": "25000000000%DENOM%",
+-                        "address": "cosmos13a6zjh96w9z9y2defkktdc6vn4r5h3s7d64pz4",
++                        "address": "cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr",
+                         "mnemonic": "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
+                     },
+                     {
+                         "name": "acc1",
+                         "amount": "24000000000%DENOM%",
+-                        "address": "cosmos1xehj0xc24k2c740jslfyd4d6mt8c4dczh8cagx",
++                        "address": "cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92",
+                         "mnemonic": "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
+                     },
+                     {
+                         "name": "user0",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1dv2h9a7en6ndg6tjcyan6c8mqulq9xtvdw45es",
+-                        "mnemonic": "feature coin pretty cat predict enact report surface idle verb solid fold waste exile extend circle media right bicycle fever system pool coyote author"
++                        "address": "cosmos1x7ymuxr2jyef2rguulyt0rh0hurh2ujkp8kt62",
++                        "mnemonic": "thrive long crack where blossom bunker predict point crater plug cupboard balance you fine modify sorry copy grow sand mutual learn usage car taste"
+                     },
+                     {
+                         "name": "user1",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1agash0q6c508wpkcts2vnhsaajuxd3l6keejxy",
+-                        "mnemonic": "hire actor quick people reduce curious pluck hospital short fresh input dizzy job coil alley dove welcome island debris whale pony during orphan satisfy"
++                        "address": "cosmos1uuyfmw0zylqe4xnw2pwu029t6gmzzplk2uuq5w",
++                        "mnemonic": "relax message shed spend myth flee spice wreck public friend dust scorpion wisdom marriage ribbon visa language matrix tennis nice evoke dwarf prosper sponsor"
+                     }
+                 ]
+             },
+@@ -73,12 +73,12 @@
+                 }
+             ],
+             "ibc_paths": [
+-                "localchain_9000-1_localcosmos-1"
++                "localchain-1_localcosmos-1"
+             ],
+             "number_vals": 1,
+             "number_node": 0,
+             "chain_type": "cosmos",
+-            "coin_type": 60,
++            "coin_type": 118,
+             "binary": "simd",
+             "bech32_prefix": "cosmos",
+             "denom": "token",
+@@ -138,19 +138,19 @@
+                     {
+                         "name": "user0",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1c00dcncrhfw4khpyvzz5xh9jwg48gk65crjpcc",
+-                        "mnemonic": "board confirm rug toe indicate call olive observe immune cup glance hazard control cancel grow ocean spot six tray alarm robot shoe inject dawn"
++                        "address": "cosmos1wz85pqtu4g92njxmxxm4hpjn3w26mxfkrv9pz7",
++                        "mnemonic": "faith amazing hat approve brother flower stage input affair tongue include token anger eagle measure exact width forget enable puppy cousin proof catch rescue"
+                     },
+                     {
+                         "name": "user1",
+                         "amount": "100000%DENOM%",
+-                        "address": "cosmos1hnq76gc88h2rp67c28pw4ss8jm46vc7qu8ghtg",
+-                        "mnemonic": "chat fox escape foot buzz south brave plate problem kingdom alley usage reflect target doll impact recycle essay you step smoke modify sand gas"
++                        "address": "cosmos13l2xap82jq644w8lxts20v4u0druag0xr9ak6h",
++                        "mnemonic": "festival begin anger blood phone catch ceiling purpose method green drive inject arena vicious emotion urge address fork material fury timber magnet layer media"
+                     }
+                 ]
+             },
+             "ibc_paths": [
+-                "localchain_9000-1_localcosmos-1"
++                "localchain-1_localcosmos-1"
+             ],
+             "number_vals": 1,
+             "number_node": 0,
+diff --git a/cmd/simd/commands.go b/cmd/simd/commands.go
+index 1c87a46..cb95dcd 100755
+--- a/cmd/simd/commands.go
++++ b/cmd/simd/commands.go
+@@ -19,6 +19,7 @@ import (
+ 	"github.com/cosmos/cosmos-sdk/client"
+ 	"github.com/cosmos/cosmos-sdk/client/debug"
+ 	"github.com/cosmos/cosmos-sdk/client/flags"
++	"github.com/cosmos/cosmos-sdk/client/keys"
+ 	"github.com/cosmos/cosmos-sdk/client/pruning"
+ 	"github.com/cosmos/cosmos-sdk/client/rpc"
+ 	"github.com/cosmos/cosmos-sdk/client/snapshot"
+@@ -31,11 +32,6 @@ import (
+ 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
+ 	"github.com/cosmos/cosmos-sdk/x/crisis"
+ 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+-	evmosserverconfig "github.com/cosmos/evm/server/config"
+-
+-	evmoscmd "github.com/cosmos/evm/client"
+-	evmosserver "github.com/cosmos/evm/server"
+-	srvflags "github.com/cosmos/evm/server/flags"
+ )
+ 
+ // initCometBFTConfig helps to override default CometBFT Config values.
+@@ -52,10 +48,6 @@ func initCometBFTConfig() *cmtcfg.Config {
+ 
+ type CustomAppConfig struct {
+ 	serverconfig.Config
+-
+-	EVM     evmosserverconfig.EVMConfig
+-	JSONRPC evmosserverconfig.JSONRPCConfig
+-	TLS     evmosserverconfig.TLSConfig
+ }
+ 
+ // initAppConfig helps to override default appConfig template and configs.
+@@ -82,16 +74,11 @@ func initAppConfig() (string, interface{}) {
+ 	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+ 
+ 	customAppConfig := CustomAppConfig{
+-		Config:  *srvCfg,
+-		EVM:     *evmosserverconfig.DefaultEVMConfig(),
+-		JSONRPC: *evmosserverconfig.DefaultJSONRPCConfig(),
+-		TLS:     *evmosserverconfig.DefaultTLSConfig(),
++		Config: *srvCfg,
+ 	}
+ 
+ 	customAppTemplate := serverconfig.DefaultConfigTemplate
+ 
+-	customAppTemplate += evmosserverconfig.DefaultEVMConfigTemplate
+-
+ 	return customAppTemplate, customAppConfig
+ }
+ 
+@@ -104,7 +91,6 @@ func initRootCmd(
+ 
+ 	rootCmd.AddCommand(
+ 		genutilcli.InitCmd(chainApp.BasicModuleManager, app.DefaultNodeHome),
+-		genutilcli.Commands(chainApp.TxConfig(), chainApp.BasicModuleManager, app.DefaultNodeHome),
+ 		cmtcli.NewCompletionCmd(rootCmd, true),
+ 		debug.Cmd(),
+ 		confixcmd.ConfigCommand(),
+@@ -112,34 +98,17 @@ func initRootCmd(
+ 		snapshot.Cmd(newApp),
+ 	)
+ 
+-	// add EVM' flavored TM commands to start server, etc.
+-	evmosserver.AddCommands(
+-		rootCmd,
+-		evmosserver.NewDefaultStartOptions(newApp, app.DefaultNodeHome),
+-		appExport,
+-		addModuleInitFlags,
+-	)
+-
+-	// add EVM key commands
+-	rootCmd.AddCommand(
+-		evmoscmd.KeyCommands(app.DefaultNodeHome, true),
+-	)
++	sdkserver.AddCommands(rootCmd, app.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
+ 
+ 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+ 	rootCmd.AddCommand(
+ 		server.StatusCommand(),
+-
++		genesisCommand(chainApp.TxConfig(), chainApp.BasicModuleManager),
++		keys.Commands(),
+ 		queryCommand(),
+ 		txCommand(),
+ 	)
+ 
+-	var err error
+-	// add general tx flags to the root command
+-	rootCmd, err = srvflags.AddTxFlags(rootCmd)
+-	if err != nil {
+-		panic(err)
+-	}
+-
+ }
+ 
+ func addModuleInitFlags(startCmd *cobra.Command) {
+@@ -221,7 +190,6 @@ func newApp(
+ 	return app.NewChainApp(
+ 		logger, db, traceStore, true,
+ 		appOpts,
+-		app.EVMAppOptions,
+ 		baseappOptions...,
+ 	)
+ }
+@@ -259,7 +227,6 @@ func appExport(
+ 		traceStore,
+ 		height == -1,
+ 		appOpts,
+-		app.EVMAppOptions,
+ 	)
+ 
+ 	if height != -1 {
+diff --git a/cmd/simd/root.go b/cmd/simd/root.go
+index dcf0a1d..d2d4417 100755
+--- a/cmd/simd/root.go
++++ b/cmd/simd/root.go
+@@ -10,7 +10,6 @@ import (
+ 
+ 	"github.com/cosmos/cosmos-sdk/client"
+ 	"github.com/cosmos/cosmos-sdk/client/config"
+-	"github.com/cosmos/cosmos-sdk/client/flags"
+ 	"github.com/cosmos/cosmos-sdk/server"
+ 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+ 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+@@ -19,7 +18,6 @@ import (
+ 	txmodule "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
+ 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+ 
+-	evmoskeyring "github.com/cosmos/evm/crypto/keyring"
+ 	"github.com/rollchains/testevm/app"
+ 	"github.com/rollchains/testevm/app/params"
+ )
+@@ -31,7 +29,6 @@ func NewRootCmd() *cobra.Command {
+ 	// note, this is not necessary when using app wiring, as depinject can be directly used (see root_v2.go)
+ 	tempApp := app.NewChainApp(
+ 		log.NewNopLogger(), dbm.NewMemDB(), nil, false, simtestutil.NewAppOptionsWithFlagHome(tempDir()),
+-		app.EVMAppOptions,
+ 	)
+ 	encodingConfig := params.EncodingConfig{
+ 		InterfaceRegistry: tempApp.InterfaceRegistry(),
+@@ -48,9 +45,6 @@ func NewRootCmd() *cobra.Command {
+ 		WithInput(os.Stdin).
+ 		WithAccountRetriever(authtypes.AccountRetriever{}).
+ 		WithHomeDir(app.DefaultNodeHome).
+-		WithBroadcastMode(flags.FlagBroadcastMode).
+-		WithKeyringOptions(evmoskeyring.Option()).
+-		WithLedgerHasProtobuf(true).
+ 		WithViper("")
+ 
+ 	rootCmd := &cobra.Command{
+diff --git a/go.mod b/go.mod
+index bd07769..162e301 100755
+--- a/go.mod
++++ b/go.mod
+@@ -7,12 +7,7 @@ toolchain go1.23.1
+ // overrides
+ replace (
+ 	cosmossdk.io/core => cosmossdk.io/core v0.11.0
+-	cosmossdk.io/store => github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe
+-	github.com/CosmWasm/wasmd => github.com/rollchains/wasmd v0.50.0-evm
+-
+-	github.com/cosmos/cosmos-sdk => github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5
+-	github.com/ethereum/go-ethereum => github.com/evmos/go-ethereum v1.10.26-evmos-rc4
+-	github.com/cosmos/evm => github.com/strangelove-ventures/os v0.1.0
++	github.com/cosmos/cosmos-sdk => github.com/rollchains/cosmos-sdk v0.50.11
+ 	github.com/spf13/viper => github.com/spf13/viper v1.17.0 // v1.18+ breaks app overrides
+ )
+ 
+@@ -52,8 +47,6 @@ require (
+ 	github.com/cosmos/ibc-apps/middleware/packet-forward-middleware/v8 v8.1.1
+ 	github.com/cosmos/ibc-go/modules/capability v1.0.1
+ 	github.com/cosmos/ibc-go/v8 v8.5.2
+-	github.com/ethereum/go-ethereum v1.15.3
+-	github.com/cosmos/evm v0.0.0-20250130185216-d2cab8abc34d
+ 	github.com/spf13/cast v1.7.1
+ 	github.com/spf13/cobra v1.8.1
+ 	github.com/spf13/viper v1.19.0
+@@ -78,17 +71,12 @@ require (
+ 	github.com/CosmWasm/wasmvm v1.5.4 // indirect
+ 	github.com/DataDog/datadog-go v3.2.0+incompatible // indirect
+ 	github.com/DataDog/zstd v1.5.5 // indirect
+-	github.com/StackExchange/wmi v1.2.1 // indirect
+-	github.com/VictoriaMetrics/fastcache v1.6.0 // indirect
++	github.com/Microsoft/go-winio v0.6.2 // indirect
+ 	github.com/aws/aws-sdk-go v1.44.224 // indirect
+ 	github.com/beorn7/perks v1.0.1 // indirect
+ 	github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d // indirect
+ 	github.com/bgentry/speakeasy v0.1.1-0.20220910012023-760eaf8b6816 // indirect
+ 	github.com/bits-and-blooms/bitset v1.17.0 // indirect
+-	github.com/btcsuite/btcd v0.24.2 // indirect
+-	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
+-	github.com/btcsuite/btcd/btcutil v1.1.6 // indirect
+-	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
+ 	github.com/bytedance/sonic v1.12.3 // indirect
+ 	github.com/bytedance/sonic/loader v0.2.0 // indirect
+ 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+@@ -116,16 +104,12 @@ require (
+ 	github.com/creachadair/tomledit v0.0.24 // indirect
+ 	github.com/danieljoos/wincred v1.1.2 // indirect
+ 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+-	github.com/deckarep/golang-set v1.8.0 // indirect
+ 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
+ 	github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f // indirect
+ 	github.com/dgraph-io/badger/v4 v4.2.0 // indirect
+ 	github.com/dgraph-io/ristretto v0.1.1 // indirect
+-	github.com/dlclark/regexp2 v1.4.1-0.20201116162257-a2a8dda75c91 // indirect
+-	github.com/dop251/goja v0.0.0-20220405120441-9037c2b61cbf // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/dvsekhvalnov/jose2go v1.6.0 // indirect
+-	github.com/edsrzf/mmap-go v1.1.0 // indirect
+ 	github.com/emicklei/dot v1.6.2 // indirect
+ 	github.com/fatih/color v1.16.0 // indirect
+ 	github.com/felixge/httpsnoop v1.0.4 // indirect
+@@ -136,9 +120,6 @@ require (
+ 	github.com/go-logfmt/logfmt v0.6.0 // indirect
+ 	github.com/go-logr/logr v1.4.2 // indirect
+ 	github.com/go-logr/stdr v1.2.2 // indirect
+-	github.com/go-ole/go-ole v1.2.6 // indirect
+-	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+-	github.com/go-stack/stack v1.8.1 // indirect
+ 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
+ 	github.com/gogo/googleapis v1.4.1 // indirect
+ 	github.com/gogo/protobuf v1.3.2 // indirect
+@@ -169,14 +150,13 @@ require (
+ 	github.com/hashicorp/go-metrics v0.5.3 // indirect
+ 	github.com/hashicorp/go-plugin v1.5.2 // indirect
+ 	github.com/hashicorp/go-safetemp v1.0.0 // indirect
++	github.com/hashicorp/go-uuid v1.0.3 // indirect
+ 	github.com/hashicorp/go-version v1.7.0 // indirect
+ 	github.com/hashicorp/golang-lru v1.0.2 // indirect
+ 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+ 	github.com/hashicorp/hcl v1.0.0 // indirect
+ 	github.com/hashicorp/yamux v0.1.1 // indirect
+ 	github.com/hdevalence/ed25519consensus v0.1.0 // indirect
+-	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
+-	github.com/holiman/uint256 v1.3.2 // indirect
+ 	github.com/huandu/skiplist v1.2.0 // indirect
+ 	github.com/iancoleman/orderedmap v0.3.0 // indirect
+ 	github.com/iancoleman/strcase v0.3.0 // indirect
+@@ -194,7 +174,6 @@ require (
+ 	github.com/manifoldco/promptui v0.9.0 // indirect
+ 	github.com/mattn/go-colorable v0.1.13 // indirect
+ 	github.com/mattn/go-isatty v0.0.20 // indirect
+-	github.com/mattn/go-runewidth v0.0.9 // indirect
+ 	github.com/minio/highwayhash v1.0.3 // indirect
+ 	github.com/mitchellh/go-homedir v1.1.0 // indirect
+ 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
+@@ -203,7 +182,7 @@ require (
+ 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+ 	github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a // indirect
+ 	github.com/oklog/run v1.1.0 // indirect
+-	github.com/olekukonko/tablewriter v0.0.5 // indirect
++	github.com/onsi/gomega v1.36.2 // indirect
+ 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+ 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
+ 	github.com/pkg/errors v0.9.1 // indirect
+@@ -212,16 +191,13 @@ require (
+ 	github.com/prometheus/client_model v0.6.1 // indirect
+ 	github.com/prometheus/common v0.62.0 // indirect
+ 	github.com/prometheus/procfs v0.15.1 // indirect
+-	github.com/prometheus/tsdb v0.10.0 // indirect
+ 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
+-	github.com/rjeczalik/notify v0.9.3 // indirect
+ 	github.com/rogpeppe/go-internal v1.12.0 // indirect
+ 	github.com/rs/cors v1.11.1 // indirect
+ 	github.com/rs/zerolog v1.33.0 // indirect
+ 	github.com/sagikazarmark/locafero v0.4.0 // indirect
+ 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
+ 	github.com/sasha-s/go-deadlock v0.3.5 // indirect
+-	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
+ 	github.com/sourcegraph/conc v0.3.0 // indirect
+ 	github.com/spf13/afero v1.11.0 // indirect
+ 	github.com/spf13/pflag v1.0.5 // indirect
+@@ -229,14 +205,7 @@ require (
+ 	github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d // indirect
+ 	github.com/tendermint/go-amino v0.16.0 // indirect
+ 	github.com/tidwall/btree v1.7.0 // indirect
+-	github.com/tidwall/gjson v1.18.0 // indirect
+-	github.com/tidwall/match v1.1.1 // indirect
+-	github.com/tidwall/pretty v1.2.0 // indirect
+-	github.com/tidwall/sjson v1.2.5 // indirect
+-	github.com/tklauser/go-sysconf v0.3.11 // indirect
+-	github.com/tklauser/numcpus v0.6.0 // indirect
+ 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+-	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
+ 	github.com/ulikunitz/xz v0.5.11 // indirect
+ 	github.com/zondax/hid v0.9.2 // indirect
+ 	github.com/zondax/ledger-go v0.14.3 // indirect
+@@ -247,6 +216,7 @@ require (
+ 	go.opentelemetry.io/otel v1.32.0 // indirect
+ 	go.opentelemetry.io/otel/metric v1.32.0 // indirect
+ 	go.opentelemetry.io/otel/trace v1.32.0 // indirect
++	go.uber.org/mock v0.5.0 // indirect
+ 	go.uber.org/multierr v1.11.0 // indirect
+ 	golang.org/x/arch v0.3.0 // indirect
+ 	golang.org/x/crypto v0.32.0 // indirect
+@@ -264,7 +234,6 @@ require (
+ 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241202173237-19429a94021a // indirect
+ 	google.golang.org/grpc v1.70.0 // indirect
+ 	gopkg.in/ini.v1 v1.67.0 // indirect
+-	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce // indirect
+ 	gopkg.in/yaml.v2 v2.4.0 // indirect
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ 	gotest.tools/v3 v3.5.1 // indirect
+diff --git a/go.sum b/go.sum
+index f4fcdc3..b10051a 100644
+--- a/go.sum
++++ b/go.sum
+@@ -204,6 +204,8 @@ cosmossdk.io/math v1.5.0 h1:sbOASxee9Zxdjd6OkzogvBZ25/hP929vdcYcBJQbkLc=
+ cosmossdk.io/math v1.5.0/go.mod h1:AAwwBmUhqtk2nlku174JwSll+/DepUXW3rWIXN5q+Nw=
+ cosmossdk.io/orm v1.0.0-beta.3 h1:XmffCwsIZE+y0sS4kEfRUfIgvJfGGn3HFKntZ91sWcU=
+ cosmossdk.io/orm v1.0.0-beta.3/go.mod h1:KSH9lKA+0K++2OKECWwPAasKbUIEtZ7xYG+0ikChiyU=
++cosmossdk.io/store v1.1.1 h1:NA3PioJtWDVU7cHHeyvdva5J/ggyLDkyH0hGHl2804Y=
++cosmossdk.io/store v1.1.1/go.mod h1:8DwVTz83/2PSI366FERGbWSH7hL6sB7HbYp8bqksNwM=
+ cosmossdk.io/tools/confix v0.1.2 h1:2hoM1oFCNisd0ltSAAZw2i4ponARPmlhuNu3yy0VwI4=
+ cosmossdk.io/tools/confix v0.1.2/go.mod h1:7XfcbK9sC/KNgVGxgLM0BrFbVcR/+6Dg7MFfpx7duYo=
+ cosmossdk.io/x/circuit v0.1.1 h1:KPJCnLChWrxD4jLwUiuQaf5mFD/1m7Omyo7oooefBVQ=
+@@ -227,6 +229,8 @@ github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161 h1:L/gRVlceqvL25
+ github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
+ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+ github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
++github.com/CosmWasm/wasmd v0.50.0 h1:NVaGqCSTRfb9UTDHJwT6nQIWcb6VjlQl88iI+u1+qjE=
++github.com/CosmWasm/wasmd v0.50.0/go.mod h1:UjmShW4l9YxaMytwJZ7IB7MWzHiynSZP3DdWrG0FRtk=
+ github.com/CosmWasm/wasmvm v1.5.4 h1:Opqy65ubJ8bMsT08dn85VjRdsLJVPIAgIXif92qOMGc=
+ github.com/CosmWasm/wasmvm v1.5.4/go.mod h1:Q0bSEtlktzh7W2hhEaifrFp1Erx11ckQZmjq8FLCyys=
+ github.com/DataDog/datadog-go v3.2.0+incompatible h1:qSG2N4FghB1He/r2mFrWKCaL7dXCilEuNEeAn20fdD4=
+@@ -241,15 +245,10 @@ github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5/go.mod h1:lmUJ/7eu/Q8
+ github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
+ github.com/Shopify/sarama v1.19.0/go.mod h1:FVkBWblsNy7DGZRfXLU0O9RCGt5g3g3yEuWXgklEdEo=
+ github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
+-github.com/StackExchange/wmi v1.2.1 h1:VIkavFPXSjcnS+O8yTq7NI32k0R5Aj+v39y29VYDOSA=
+-github.com/StackExchange/wmi v1.2.1/go.mod h1:rcmrprowKIVzvc+NUiLncP2uuArMWLCbu9SBzvHz7e8=
+-github.com/VictoriaMetrics/fastcache v1.6.0 h1:C/3Oi3EiBCqufydp1neRZkqcwmEiuRT9c3fqvvgKm5o=
+-github.com/VictoriaMetrics/fastcache v1.6.0/go.mod h1:0qHz5QP0GMX4pfmMA/zt5RgfNuXJrTP0zS7DqpHGGTw=
+ github.com/VividCortex/gohistogram v1.0.0 h1:6+hBz+qvs0JOrrNhhmR7lFxo5sINxBCGXrdtl/UvroE=
+ github.com/VividCortex/gohistogram v1.0.0/go.mod h1:Pf5mBqqDxYaXu3hDrrU+w6nw50o/4+TcAqDqk/vUH7g=
+ github.com/adlio/schema v1.3.6 h1:k1/zc2jNfeiZBA5aFTRy37jlBIuCkXCm0XmvpzCKI9I=
+ github.com/adlio/schema v1.3.6/go.mod h1:qkxwLgPBd1FgLRHYVCmQT/rrBr3JH38J9LjmVzWNudg=
+-github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=
+ github.com/afex/hystrix-go v0.0.0-20180502004556-fa1af6a1f4f5/go.mod h1:SkGFH1ia65gfNATL8TAiHDNxPzPdmEL5uirI2Uyuz6c=
+ github.com/alecthomas/participle/v2 v2.0.0-alpha7 h1:cK4vjj0VSgb3lN1nuKA5F7dw+1s1pWBe5bx7nNCnN+c=
+ github.com/alecthomas/participle/v2 v2.0.0-alpha7/go.mod h1:NumScqsC42o9x+dGj8/YqsIfhrIQjFEOFovxotbBirA=
+@@ -258,8 +257,6 @@ github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuy
+ github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
+ github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
+ github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d/go.mod h1:rBZYJk541a8SKzHPHnH3zbiI+7dagKZ0cgpgrD7Fyho=
+-github.com/allegro/bigcache v1.2.1-0.20190218064605-e24eb225f156 h1:eMwmnE/GDgah4HI848JfFxHt+iPb26b4zyfspmqY0/8=
+-github.com/allegro/bigcache v1.2.1-0.20190218064605-e24eb225f156/go.mod h1:Cb/ax3seSYIx7SuZdm2G2xzfwmv3TPSk2ucNfQESPXM=
+ github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
+ github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+ github.com/apache/thrift v0.13.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+@@ -285,33 +282,10 @@ github.com/bgentry/speakeasy v0.1.1-0.20220910012023-760eaf8b6816 h1:41iFGWnSlI2
+ github.com/bgentry/speakeasy v0.1.1-0.20220910012023-760eaf8b6816/go.mod h1:+zsyZBPWlz7T6j88CTgSN5bM796AkVf0kBD4zp0CCIs=
+ github.com/bits-and-blooms/bitset v1.17.0 h1:1X2TS7aHz1ELcC0yU1y2stUs/0ig5oMU6STFZGrhvHI=
+ github.com/bits-and-blooms/bitset v1.17.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
+-github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
+-github.com/btcsuite/btcd v0.22.0-beta.0.20220111032746-97732e52810c/go.mod h1:tjmYdS6MLJ5/s0Fj4DbLgSbDHbEqLJrtnHecBFkdz5M=
+-github.com/btcsuite/btcd v0.23.5-0.20231215221805-96c9fd8078fd/go.mod h1:nm3Bko6zh6bWP60UxwoT5LzdGJsQJaPo6HjduXq9p6A=
+-github.com/btcsuite/btcd v0.24.2 h1:aLmxPguqxza+4ag8R1I2nnJjSu2iFn/kqtHTIImswcY=
+-github.com/btcsuite/btcd v0.24.2/go.mod h1:5C8ChTkl5ejr3WHj8tkQSCmydiMEPB0ZhQhehpq7Dgg=
+-github.com/btcsuite/btcd/btcec/v2 v2.1.0/go.mod h1:2VzYrv4Gm4apmbVVsSq5bqf1Ec8v56E48Vt0Y/umPgA=
+-github.com/btcsuite/btcd/btcec/v2 v2.1.3/go.mod h1:ctjw4H1kknNJmRN4iP1R7bTQ+v3GJkZBd6mui8ZsAZE=
+ github.com/btcsuite/btcd/btcec/v2 v2.3.4 h1:3EJjcN70HCu/mwqlUsGK8GcNVyLVxFDlWurTXGPFfiQ=
+ github.com/btcsuite/btcd/btcec/v2 v2.3.4/go.mod h1:zYzJ8etWJQIv1Ogk7OzpWjowwOdXY1W/17j2MW85J04=
+-github.com/btcsuite/btcd/btcutil v1.0.0/go.mod h1:Uoxwv0pqYWhD//tfTiipkxNfdhG9UrLwaeswfjfdF0A=
+-github.com/btcsuite/btcd/btcutil v1.1.0/go.mod h1:5OapHB7A2hBBWLm48mmw4MOHNJCcUBTwmWH/0Jn8VHE=
+-github.com/btcsuite/btcd/btcutil v1.1.5/go.mod h1:PSZZ4UitpLBWzxGd5VGOrLnmOjtPP/a6HaFo12zMs00=
+ github.com/btcsuite/btcd/btcutil v1.1.6 h1:zFL2+c3Lb9gEgqKNzowKUPQNb8jV7v5Oaodi/AYFd6c=
+ github.com/btcsuite/btcd/btcutil v1.1.6/go.mod h1:9dFymx8HpuLqBnsPELrImQeTQfKBQqzqGbbV3jK55aE=
+-github.com/btcsuite/btcd/chaincfg/chainhash v1.0.0/go.mod h1:7SFka0XMvUgj3hfZtydOrQY2mwhPclbT2snogU7SQQc=
+-github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1/go.mod h1:7SFka0XMvUgj3hfZtydOrQY2mwhPclbT2snogU7SQQc=
+-github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 h1:59Kx4K6lzOW5w6nFlA0v5+lk/6sjybR934QNHSJZPTQ=
+-github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0/go.mod h1:7SFka0XMvUgj3hfZtydOrQY2mwhPclbT2snogU7SQQc=
+-github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f/go.mod h1:TdznJufoqS23FtqVCzL0ZqgP5MqXbb4fg/WgDys70nA=
+-github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d/go.mod h1:+5NJ2+qvTyV9exUAL/rxXi3DcLg2Ts+ymUAY5y4NvMg=
+-github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd/go.mod h1:HHNXQzUsZCxOoE+CPiyCTO6x34Zs86zZUiwtpXoGdtg=
+-github.com/btcsuite/goleveldb v0.0.0-20160330041536-7834afc9e8cd/go.mod h1:F+uVaaLLH7j4eDXPRvw78tMflu7Ie2bzYOH4Y8rRKBY=
+-github.com/btcsuite/goleveldb v1.0.0/go.mod h1:QiK9vBlgftBg6rWQIj6wFzbPfRjiykIEhBH4obrXJ/I=
+-github.com/btcsuite/snappy-go v0.0.0-20151229074030-0bdef8d06723/go.mod h1:8woku9dyThutzjeg+3xrA5iCpBRH8XEEg3lh6TiUghc=
+-github.com/btcsuite/snappy-go v1.0.0/go.mod h1:8woku9dyThutzjeg+3xrA5iCpBRH8XEEg3lh6TiUghc=
+-github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792/go.mod h1:ghJtEyQwv5/p4Mg4C0fgbePVuGr935/5ddU9Z3TmDRY=
+-github.com/btcsuite/winsvc v1.0.0/go.mod h1:jsenWakMcC0zFBFurPLEAyrnc/teJEM1O46fmI40EZs=
+ github.com/bufbuild/protocompile v0.6.0 h1:Uu7WiSQ6Yj9DbkdnOe7U4mNKp58y9WDMKDn28/ZlunY=
+ github.com/bufbuild/protocompile v0.6.0/go.mod h1:YNP35qEYoYGme7QMtz5SBCoN4kL4g12jTtjuzRNdjpE=
+ github.com/bytedance/sonic v1.12.3 h1:W2MGa7RCU1QTeYRTPE3+88mVC0yXmsRQRChiyVocVjU=
+@@ -326,8 +300,6 @@ github.com/cenkalti/backoff/v4 v4.1.1/go.mod h1:scbssz8iZGpm3xbr14ovlUdkxfGXNInq
+ github.com/cenkalti/backoff/v4 v4.2.1 h1:y4OZtCnogmCPw98Zjyt5a6+QwPLGkiQsYW5oUqylYbM=
+ github.com/cenkalti/backoff/v4 v4.2.1/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
+ github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
+-github.com/cespare/cp v0.1.0 h1:SE+dxFebS7Iik5LK0tsi1k9ZCxEaFX4AjQmoyA+1dJk=
+-github.com/cespare/cp v0.1.0/go.mod h1:SOGHArjBr4JWaSDEVpWpo/hNg6RoKrls6Oh40hiwW+s=
+ github.com/cespare/xxhash v1.1.0/go.mod h1:XrSqR1VqqWfGrhpAt58auRo0WTKS1nRRg3ghfAqPWnc=
+ github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
+ github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+@@ -417,7 +389,6 @@ github.com/cosmos/keyring v1.2.0/go.mod h1:fc+wB5KTk9wQ9sDx0kFXB3A0MaeGHM9AwRStK
+ github.com/cosmos/ledger-cosmos-go v0.14.0 h1:WfCHricT3rPbkPSVKRH+L4fQGKYHuGOK9Edpel8TYpE=
+ github.com/cosmos/ledger-cosmos-go v0.14.0/go.mod h1:E07xCWSBl3mTGofZ2QnL4cIUzMbbGVyik84QYKbX3RA=
+ github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=
+-github.com/cpuguy83/go-md2man/v2 v2.0.4 h1:wfIWP927BUkWJb2NmU/kNDYIBTh/ziUX91+lVfRxZq4=
+ github.com/cpuguy83/go-md2man/v2 v2.0.4/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
+ github.com/creachadair/atomicfile v0.3.1 h1:yQORkHjSYySh/tv5th1dkKcn02NEW5JleB84sjt+W4Q=
+ github.com/creachadair/atomicfile v0.3.1/go.mod h1:mwfrkRxFKwpNAflYZzytbSwxvbK6fdGRRlp0KEQc0qU=
+@@ -431,20 +402,14 @@ github.com/cucumber/common/messages/go/v17 v17.1.1 h1:RNqopvIFyLWnKv0LfATh34SWBh
+ github.com/cucumber/common/messages/go/v17 v17.1.1/go.mod h1:bpGxb57tDE385Rb2EohgUadLkAbhoC4IyCFi89u/JQI=
+ github.com/danieljoos/wincred v1.1.2 h1:QLdCxFs1/Yl4zduvBdcHB8goaYk9RARS2SgLLRuAyr0=
+ github.com/danieljoos/wincred v1.1.2/go.mod h1:GijpziifJoIBfYh+S7BbkdUTU4LfM+QnGqR5Vl2tAx0=
+-github.com/davecgh/go-spew v0.0.0-20171005155431-ecdeabc65495/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
+ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+-github.com/deckarep/golang-set v1.8.0 h1:sk9/l/KqpunDwP7pSjUg0keiOOLEnOBHzykLrsPppp4=
+-github.com/deckarep/golang-set v1.8.0/go.mod h1:5nI87KwE7wgsBU1F4GKAw2Qod7p5kyS383rP6+o6qqo=
+-github.com/decred/dcrd/crypto/blake256 v1.0.0/go.mod h1:sQl2p6Y26YV+ZOcSTP6thNdn47hh8kt6rqSlvmrXFAc=
+ github.com/decred/dcrd/crypto/blake256 v1.0.1 h1:7PltbUIQB7u/FfZ39+DGa/ShuMyJ5ilcvdfma9wOH6Y=
+ github.com/decred/dcrd/crypto/blake256 v1.0.1/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
+-github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1/go.mod h1:hyedUtir6IdtD/7lIxGeCxkaw7y45JueMRL4DIyJDKs=
+ github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 h1:rpfIENRNNilwHwZeG5+P150SMrnNEcHYvcCuK6dPZSg=
+ github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0/go.mod h1:v57UDF4pDQJcEfFUCRop3lJL149eHGSe9Jvczhzjo/0=
+-github.com/decred/dcrd/lru v1.0.0/go.mod h1:mxKOwFd7lFjN2GZYsiz/ecgqR6kkYAl+0pz0tEMk218=
+ github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f h1:U5y3Y5UE0w7amNe7Z5G/twsBW0KEalRQXZzf8ufSh9I=
+ github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f/go.mod h1:xH/i4TFMt8koVQZ6WFms69WAsDWr2XsYL3Hkl7jkoLE=
+ github.com/dgraph-io/badger/v4 v4.2.0 h1:kJrlajbXXL9DFTNuhhu9yCx7JJa4qpYWxtE8BzuWsEs=
+@@ -454,18 +419,12 @@ github.com/dgraph-io/ristretto v0.1.1/go.mod h1:S1GPSBCYCIhmVNfcth17y2zZtQT6wzkz
+ github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2/go.mod h1:SqUrOPUnsFjfmXRMNPybcSiG0BgUW2AuFH8PAnS2iTw=
+ github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 h1:fAjc9m62+UWV/WAFKLNi6ZS0675eEUC9y3AlwSbQu1Y=
+ github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13/go.mod h1:SqUrOPUnsFjfmXRMNPybcSiG0BgUW2AuFH8PAnS2iTw=
+-github.com/dgryski/go-sip13 v0.0.0-20181026042036-e10d5fee7954/go.mod h1:vAd38F8PWV+bWy6jNmig1y/TA+kYO4g3RSRF0IAv0no=
+ github.com/distribution/reference v0.5.0 h1:/FUIFXtfc/x2gpa5/VGfiGLuOIdYa1t65IKK2OFGvA0=
+ github.com/distribution/reference v0.5.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
+-github.com/dlclark/regexp2 v1.4.1-0.20201116162257-a2a8dda75c91 h1:Izz0+t1Z5nI16/II7vuEo/nHjodOg0p7+OiDpjX5t1E=
+-github.com/dlclark/regexp2 v1.4.1-0.20201116162257-a2a8dda75c91/go.mod h1:2pZnwuY/m+8K6iRw6wQdMtk+rH5tNGR1i55kozfMjCc=
+ github.com/docker/go-connections v0.4.0 h1:El9xVISelRB7BuFusrZozjnkIM5YnzCViNKohAFqRJQ=
+ github.com/docker/go-connections v0.4.0/go.mod h1:Gbd7IOopHjR8Iph03tsViu4nIes5XhDvyHbTtUxmeec=
+ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4=
+ github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
+-github.com/dop251/goja v0.0.0-20220405120441-9037c2b61cbf h1:Yt+4K30SdjOkRoRRm3vYNQgR+/ZIy0RmeUDZo7Y8zeQ=
+-github.com/dop251/goja v0.0.0-20220405120441-9037c2b61cbf/go.mod h1:R9ET47fwRVRPZnOGvHxxhuZcbrMCuiqOz3Rlrh4KSnk=
+-github.com/dop251/goja_nodejs v0.0.0-20210225215109-d91c329300e7/go.mod h1:hn7BA7c8pLvoGndExHudxTDKZ84Pyvv+90pbBjbTz0Y=
+ github.com/dustin/go-humanize v0.0.0-20171111073723-bb3d318650d4/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
+ github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
+ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
+@@ -476,8 +435,6 @@ github.com/eapache/go-resiliency v1.1.0/go.mod h1:kFI+JgMyC7bLPUVY133qvEBtVayf5m
+ github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21/go.mod h1:+020luEh2TKB4/GOp8oxxtq0Daoen/Cii55CzbTV6DU=
+ github.com/eapache/queue v1.1.0/go.mod h1:6eCeP0CKFpHLu8blIFXhExK/dRa7WDZfr6jVFPTqq+I=
+ github.com/edsrzf/mmap-go v1.0.0/go.mod h1:YO35OhQPt3KJa3ryjFM5Bs14WD66h8eGKpfaBNrHW5M=
+-github.com/edsrzf/mmap-go v1.1.0 h1:6EUwBLQ/Mcr1EYLE4Tn1VdW1A4ckqCQWZBw8Hr0kjpQ=
+-github.com/edsrzf/mmap-go v1.1.0/go.mod h1:19H/e8pUPLicwkyNgOykDXkJ9F0MHE+Z52B8EIth78Q=
+ github.com/emicklei/dot v1.6.2 h1:08GN+DD79cy/tzN6uLCT84+2Wk9u+wvqP+Hkx/dIR8A=
+ github.com/emicklei/dot v1.6.2/go.mod h1:DeV7GvQtIw4h2u73RKBkkFdvVAz0D9fzeJrgPW6gy/s=
+ github.com/envoyproxy/go-control-plane v0.6.9/go.mod h1:SBwIajubJHhxtWwsL9s8ss4safvEdbitLhGGK48rN6g=
+@@ -491,20 +448,12 @@ github.com/envoyproxy/go-control-plane v0.9.9-0.20210512163311-63b5d3c536b0/go.m
+ github.com/envoyproxy/go-control-plane v0.9.10-0.20210907150352-cf90f659a021/go.mod h1:AFq3mo9L8Lqqiid3OhADV3RfLJnjiw63cSpi+fDTRC0=
+ github.com/envoyproxy/go-control-plane v0.10.2-0.20220325020618-49ff273808a1/go.mod h1:KJwIaB5Mv44NWtYuAOFCVOjcI94vtpEz2JU/D2v6IjE=
+ github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
+-github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe h1:CKvjP3CcWckOiwffAARb9qe+t0+VWoVDiicYkQMvZfQ=
+-github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe/go.mod h1:Bm6h8ZkYgVTytHK5vhHOMKw9OHyiumm3b1UbkYIJ/Ug=
+-github.com/evmos/go-ethereum v1.10.26-evmos-rc4 h1:vwDVMScuB2KSu8ze5oWUuxm6v3bMUp6dL3PWvJNJY+I=
+-github.com/evmos/go-ethereum v1.10.26-evmos-rc4/go.mod h1:/6CsT5Ceen2WPLI/oCA3xMcZ5sWMF/D46SjM/ayY0Oo=
+-github.com/cosmos/evm/example_chain v0.0.0-20240924163020-b2a4187dad50 h1:zWJYHc0WXE5YnuzYJnUzjMwuloxSz5ALCoNSzcuhKsA=
+-github.com/cosmos/evm/example_chain v0.0.0-20240924163020-b2a4187dad50/go.mod h1:+SPMqw9wtbWO3jG02uLbLtVVjMHBldmXTN51kxbWqJ8=
+ github.com/fatih/color v1.7.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
+ github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
+ github.com/fatih/color v1.16.0 h1:zmkK9Ngbjj+K0yRhTVONQh1p/HknKYSlNT+vZCzyokM=
+ github.com/fatih/color v1.16.0/go.mod h1:fL2Sau1YI5c0pdGEVCbKQbLXB6edEj1ZgiY4NijnWvE=
+ github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
+ github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
+-github.com/fjl/memsize v0.0.0-20190710130421-bcb5799ab5e5 h1:FtmdgXiUlNeRsoNMFlKLDt+S+6hbjVMEW6RGQ7aUf7c=
+-github.com/fjl/memsize v0.0.0-20190710130421-bcb5799ab5e5/go.mod h1:VvhXpOYNQvB+uIk2RvXzuaQtkQJzzIx6lSBe1xv7hi0=
+ github.com/fortytw2/leaktest v1.3.0 h1:u8491cBMTQ8ft8aeV+adlcytMZylmA5nnwwkRZjI8vw=
+ github.com/fortytw2/leaktest v1.3.0/go.mod h1:jDsjWgpAGjm2CA7WthBh/CdZYEPF31XHquHwclZch5g=
+ github.com/franela/goblin v0.0.0-20200105215937-c9ffbefa60db/go.mod h1:7dvUGVsVBjqR7JHJk0brhHOZYGmfBYOrK0ZhYMEtBr4=
+@@ -543,21 +492,12 @@ github.com/go-logr/logr v1.4.2 h1:6pFjapn8bFcIbiKo3XT4j/BhANplGihG6tvd+8rYgrY=
+ github.com/go-logr/logr v1.4.2/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
+ github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
+ github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre4VKE=
+-github.com/go-ole/go-ole v1.2.5/go.mod h1:pprOEPIfldk/42T2oK7lQ4v4JSDwmV0As9GaiUsvbm0=
+-github.com/go-ole/go-ole v1.2.6 h1:/Fpf6oFPoeFik9ty7siob0G6Ke8QvQEuVcuChpwXzpY=
+-github.com/go-ole/go-ole v1.2.6/go.mod h1:pprOEPIfldk/42T2oK7lQ4v4JSDwmV0As9GaiUsvbm0=
+ github.com/go-playground/assert/v2 v2.0.1/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
+ github.com/go-playground/locales v0.14.0/go.mod h1:sawfccIbzZTqEDETgFXqTho0QybSa7l++s0DH+LDiLs=
+ github.com/go-playground/universal-translator v0.18.0/go.mod h1:UvRDBj+xPUEGrFYl+lu/H90nyDXpg0fqeB/AQUGNTVA=
+ github.com/go-playground/validator/v10 v10.10.0/go.mod h1:74x4gJWsvQexRdW8Pn3dXSGrTK4nAUsbPlLADvpJkos=
+-github.com/go-sourcemap/sourcemap v2.1.3+incompatible h1:W1iEw64niKVGogNgBN3ePyLFfuisuzeidWPMPWmECqU=
+-github.com/go-sourcemap/sourcemap v2.1.3+incompatible/go.mod h1:F8jJfvm2KbVjc5NqelyYJmf/v5J0dwNLS2mL4sNA1Jg=
+ github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
+ github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
+-github.com/go-stack/stack v1.8.1 h1:ntEHSVwIt7PNXNpgPmVfMrNhLtgjlmnZha2kOpuRiDw=
+-github.com/go-stack/stack v1.8.1/go.mod h1:dcoOX6HbPZSZptuspn9bctJ+N/CnF5gGygcUP3XYfe4=
+-github.com/go-task/slim-sprig/v3 v3.0.0 h1:sUs3vkvUymDpBKi3qH1YSqBQk9+9D/8M2mN1vB6EwHI=
+-github.com/go-task/slim-sprig/v3 v3.0.0/go.mod h1:W848ghGpv3Qj3dhTPRyJypKRiqCdHZiAzKg9hl15HA8=
+ github.com/gobwas/httphead v0.0.0-20180130184737-2c6c146eadee/go.mod h1:L0fX3K22YWvt/FAX9NnzrNzcI4wNYi9Yku4O0LKYflo=
+ github.com/gobwas/pool v0.2.0/go.mod h1:q8bcK0KcYlCgd9e7WYLm9LpyS+YeLd8JVDW6WezmKEw=
+ github.com/gobwas/ws v1.0.2/go.mod h1:szmBTxLgaFppYjEmNtny/v3w89xOydFnnZMcgRRu/EM=
+@@ -580,8 +520,6 @@ github.com/gogo/protobuf v1.3.2 h1:Ov1cvc58UF3b5XjBnZv7+opcTcQFZebYjWzi34vdm4Q=
+ github.com/gogo/protobuf v1.3.2/go.mod h1:P1XiOD3dCwIKUDQYPy72D8LYyHL2YPYrpS2s69NZV8Q=
+ github.com/gogo/status v1.1.0 h1:+eIkrewn5q6b30y+g/BJINVVdi2xH7je5MPJ3ZPK3JA=
+ github.com/gogo/status v1.1.0/go.mod h1:BFv9nrluPLmrS0EmGVvLaPNmRosr9KapBYd5/hpY1WM=
+-github.com/golang-jwt/jwt/v4 v4.3.0 h1:kHL1vqdqWNfATmA0FNMdmZNMyZI1U6O31X4rlIPoBog=
+-github.com/golang-jwt/jwt/v4 v4.3.0/go.mod h1:/xlHOz8bRuivTWchD4jCa+NbatV+wEUSzwAxVc6locg=
+ github.com/golang-jwt/jwt/v4 v4.4.2/go.mod h1:m21LjoU+eqJr34lmDMbreY2eSTRJ1cv77w39/MY0Ch0=
+ github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b/go.mod h1:SBH7ygxi8pfUlaOkMMuAQtPIUF8ecWP5IEl/CR7VP2Q=
+ github.com/golang/glog v1.2.3 h1:oDTdz9f5VGVVNGu/Q7UXKWYsD0873HXLHdJUNBsSEKM=
+@@ -623,7 +561,6 @@ github.com/golang/protobuf v1.5.2/go.mod h1:XVQd3VNwM+JqD3oG2Ue2ip4fOMUkwXdXDdiu
+ github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
+ github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
+ github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+-github.com/golang/snappy v0.0.1/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+ github.com/golang/snappy v0.0.3/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+ github.com/golang/snappy v0.0.4/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+ github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb h1:PBC98N2aIaM3XXiurYmW7fx4GZkL8feAMVq7nEjURHk=
+@@ -678,8 +615,6 @@ github.com/google/pprof v0.0.0-20210226084205-cbba55b83ad5/go.mod h1:kpwsk12EmLe
+ github.com/google/pprof v0.0.0-20210601050228-01bbb1931b22/go.mod h1:kpwsk12EmLew5upagYY7GY0pfYCcupk39gWOCRROcvE=
+ github.com/google/pprof v0.0.0-20210609004039-a478d1d731e9/go.mod h1:kpwsk12EmLew5upagYY7GY0pfYCcupk39gWOCRROcvE=
+ github.com/google/pprof v0.0.0-20210720184732-4bb14d4b1be1/go.mod h1:kpwsk12EmLew5upagYY7GY0pfYCcupk39gWOCRROcvE=
+-github.com/google/pprof v0.0.0-20241210010833-40e02aabc2ad h1:a6HEuzUHeKH6hwfN/ZoQgRgVIWFJljSWa/zetS2WTvg=
+-github.com/google/pprof v0.0.0-20241210010833-40e02aabc2ad/go.mod h1:vavhavw2zAxS5dIdcRluK6cSGGPlZynqzFM8NdvU144=
+ github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
+ github.com/google/s2a-go v0.1.7 h1:60BLSyTrOV4/haCDW4zb1guZItoSq8foHCXrAnjBo/o=
+ github.com/google/s2a-go v0.1.7/go.mod h1:50CgR4k1jNlWBu4UfS4AcfhVe1r6pdZPygJ3R8F0Qdw=
+@@ -715,7 +650,6 @@ github.com/gorilla/mux v1.8.1 h1:TuBL49tXwgrFYWhqrNgrUNEY92u81SPhu7sTdzQEiWY=
+ github.com/gorilla/mux v1.8.1/go.mod h1:AKf9I4AEqPTmMytcMc0KkNouC66V3BtZ4qD5fmWSiMQ=
+ github.com/gorilla/websocket v0.0.0-20170926233335-4201258b820c/go.mod h1:E7qHFY5m1UJ88s3WnNqhKjPHQ0heANvMoAMk2YaljkQ=
+ github.com/gorilla/websocket v1.4.1/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+-github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
+ github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+ github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4/go.mod h1:FiyG127CGDf3tlThmgyCl78X/SZQqEOJBCDaAfeWzPs=
+@@ -731,8 +665,6 @@ github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c/go.mod h1:NM
+ github.com/hashicorp/consul/api v1.3.0/go.mod h1:MmDNSzIMUjNpY/mQ398R4bk2FnqQLoPndWW5VkKPlCE=
+ github.com/hashicorp/consul/sdk v0.3.0/go.mod h1:VKf9jXwCTEY1QZP2MOLRhb5i/I/ssyNV1vwHyQBF0x8=
+ github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
+-github.com/hashicorp/go-bexpr v0.1.10 h1:9kuI5PFotCboP3dkDYFr/wi0gg0QVbSNz5oFRpxn4uE=
+-github.com/hashicorp/go-bexpr v0.1.10/go.mod h1:oxlubA2vC/gFVfX1A6JGp7ls7uCDlfJn732ehYYg+g0=
+ github.com/hashicorp/go-cleanhttp v0.5.0/go.mod h1:JpRdi6/HCYpAwUzNwuwqhbovhLtngrth3wmdIIUrZ80=
+ github.com/hashicorp/go-cleanhttp v0.5.1/go.mod h1:JpRdi6/HCYpAwUzNwuwqhbovhLtngrth3wmdIIUrZ80=
+ github.com/hashicorp/go-cleanhttp v0.5.2 h1:035FKYIWjmULyFRBKPs8TBQoi0x6d9G4xc9neXJWAZQ=
+@@ -781,18 +713,12 @@ github.com/hashicorp/yamux v0.1.1 h1:yrQxtgseBDrq9Y652vSRDvsKCJKOUD+GzTS4Y0Y8pvE
+ github.com/hashicorp/yamux v0.1.1/go.mod h1:CtWFDAQgb7dxtzFs4tWbplKIe2jSi3+5vKbgIO0SLnQ=
+ github.com/hdevalence/ed25519consensus v0.1.0 h1:jtBwzzcHuTmFrQN6xQZn6CQEO/V9f7HsjsjeEZ6auqU=
+ github.com/hdevalence/ed25519consensus v0.1.0/go.mod h1:w3BHWjwJbFU29IRHL1Iqkw3sus+7FctEyM4RqDxYNzo=
+-github.com/holiman/bloomfilter/v2 v2.0.3 h1:73e0e/V0tCydx14a0SCYS/EWCxgwLZ18CZcZKVu0fao=
+-github.com/holiman/bloomfilter/v2 v2.0.3/go.mod h1:zpoh+gs7qcpqrHr3dB55AMiJwo0iURXE7ZOP9L9hSkA=
+-github.com/holiman/uint256 v1.3.2 h1:a9EgMPSC1AAaj1SZL5zIQD3WbwTuHrMGOerLjGmM/TA=
+-github.com/holiman/uint256 v1.3.2/go.mod h1:EOMSn4q6Nyt9P6efbI3bueV4e1b3dGlUCXeiRV4ng7E=
+ github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
+ github.com/huandu/go-assert v1.1.5 h1:fjemmA7sSfYHJD7CUqs9qTwwfdNAx7/j2/ZlHXzNB3c=
+ github.com/huandu/go-assert v1.1.5/go.mod h1:yOLvuqZwmcHIC5rIzrBhT7D3Q9c3GFnd0JrPVhn/06U=
+ github.com/huandu/skiplist v1.2.0 h1:gox56QD77HzSC0w+Ws3MH3iie755GBJU1OER3h5VsYw=
+ github.com/huandu/skiplist v1.2.0/go.mod h1:7v3iFjLcSAzO4fN5B8dvebvo/qsfumiLiDXMrPiHF9w=
+ github.com/hudl/fargo v1.3.0/go.mod h1:y3CKSmjA+wD2gak7sUSXTAoopbhU08POFhmITJgmKTg=
+-github.com/huin/goupnp v1.0.3 h1:N8No57ls+MnjlB+JPiCVSOyy/ot7MJTqlo7rn+NYSqQ=
+-github.com/huin/goupnp v1.0.3/go.mod h1:ZxNlw5WqJj6wSsRK5+YfflQGXYfccj5VgQsMNixHM7Y=
+ github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
+ github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
+ github.com/iancoleman/strcase v0.3.0 h1:nTXanmYxhfFAMjZL34Ov6gkzEsSJZ5DbhxWjvSASxEI=
+@@ -805,10 +731,6 @@ github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANyt
+ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
+ github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
+ github.com/influxdata/influxdb1-client v0.0.0-20191209144304-8bf82d3c094d/go.mod h1:qj24IKcXYK6Iy9ceXlo3Tc+vtHo9lIhSX5JddghvEPo=
+-github.com/jackpal/go-nat-pmp v1.0.2 h1:KzKSgb7qkJvOUTqYl9/Hg/me3pWgBmERKrTGD7BdWus=
+-github.com/jackpal/go-nat-pmp v1.0.2/go.mod h1:QPH045xvCAeXUZOxsnwmrtiCoxIr9eob+4orBN1SBKc=
+-github.com/jessevdk/go-flags v0.0.0-20141203071132-1679536dcc89/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
+-github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
+ github.com/jhump/protoreflect v1.15.3 h1:6SFRuqU45u9hIZPJAoZ8c28T3nK64BNdp9w6jFonzls=
+ github.com/jhump/protoreflect v1.15.3/go.mod h1:4ORHmSBmlCW8fh3xHmJMGyul1zNqZK4Elxc8qKP+p1k=
+ github.com/jmespath/go-jmespath v0.0.0-20180206201540-c2b33e8439af/go.mod h1:Nht3zPeWKUH0NzdCt2Blrr5ys8VGpn0CEB0cQHVjt7k=
+@@ -820,7 +742,6 @@ github.com/jmhodges/levigo v1.0.0 h1:q5EC36kV79HWeTBWsod3mG11EgStG3qArTKcvlksN1U
+ github.com/jmhodges/levigo v1.0.0/go.mod h1:Q6Qx+uH3RAqyK4rFQroq9RL7mdkABMcfhEI+nNuzMJQ=
+ github.com/jonboulle/clockwork v0.1.0/go.mod h1:Ii8DK3G1RaLaWxj9trq07+26W01tbo22gdxWY5EU2bo=
+ github.com/jpillora/backoff v1.0.0/go.mod h1:J/6gKK9jxlEcS3zixgDgUAsiuZ7yrSoa/FX5e0EB2j4=
+-github.com/jrick/logrotate v1.0.0/go.mod h1:LNinyqDIJnpAur+b8yyulnQw/wDuN1+BYKlTRt3OuAQ=
+ github.com/json-iterator/go v1.1.6/go.mod h1:+SdeFBvtyEkXs7REEP0seUULqWtbJapLOCVDaaPEHmU=
+ github.com/json-iterator/go v1.1.7/go.mod h1:KdQUCv79m/52Kvf8AW2vK1V8akMuk1QjK/uOdHXbAo4=
+ github.com/json-iterator/go v1.1.8/go.mod h1:KdQUCv79m/52Kvf8AW2vK1V8akMuk1QjK/uOdHXbAo4=
+@@ -836,7 +757,6 @@ github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvW
+ github.com/kisielk/errcheck v1.2.0/go.mod h1:/BMXB+zMLi60iA8Vv6Ksmxu/1UDYcXs4uQLJ+jE2L00=
+ github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
+ github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
+-github.com/kkdai/bstream v0.0.0-20161212061736-f391b8402d23/go.mod h1:J+Gs4SYgM6CZQHDETBtE9HaSEkGmuNXF86RwHhHUvq4=
+ github.com/klauspost/compress v1.10.3/go.mod h1:aoV0uJVorq1K+umq18yTdKaF57EivdYsUV+/s2qKfXs=
+ github.com/klauspost/compress v1.11.7/go.mod h1:aoV0uJVorq1K+umq18yTdKaF57EivdYsUV+/s2qKfXs=
+ github.com/klauspost/compress v1.15.11/go.mod h1:QPwzmACJjUTFsnSHH934V6woptycfrDDJnH7hvFVbGM=
+@@ -887,8 +807,6 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
+ github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
+ github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
+ github.com/mattn/go-runewidth v0.0.4/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
+-github.com/mattn/go-runewidth v0.0.9 h1:Lm995f3rfxdpd6TSmuVCHVb/QhupuXlYr8sCI/QdE+0=
+-github.com/mattn/go-runewidth v0.0.9/go.mod h1:H031xJmbD/WCDINGzjvQ9THkh0rPKHF+m2gUSrubnMI=
+ github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
+ github.com/miekg/dns v1.0.14/go.mod h1:W1PPwlIAgtquWBMBEV9nkV9Cazfe8ScdGz/Lj7v3Nrg=
+ github.com/minio/highwayhash v1.0.3 h1:kbnuUMoHYyVl7szWjSxJnxw11k2U709jqFPPmIUyD6Q=
+@@ -906,8 +824,6 @@ github.com/mitchellh/mapstructure v0.0.0-20160808181253-ca63d7c062ee/go.mod h1:F
+ github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
+ github.com/mitchellh/mapstructure v1.5.0 h1:jeMsZIYE/09sWLaz43PL7Gy6RuMjD2eJVyuac5Z2hdY=
+ github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=
+-github.com/mitchellh/pointerstructure v1.2.0 h1:O+i9nHnXS3l/9Wu7r4NrEdwA2VFTicjUEN1uBnDo34A=
+-github.com/mitchellh/pointerstructure v1.2.0/go.mod h1:BRAsLI5zgXmw97Lf6s25bs8ohIXc3tViBH44KcwB2g4=
+ github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+ github.com/modern-go/reflect2 v0.0.0-20180701023420-4b7aa43c6742/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
+@@ -938,19 +854,13 @@ github.com/oklog/oklog v0.3.2/go.mod h1:FCV+B7mhrz4o+ueLpx+KqkyXRGMWOYEvfiXtdGtb
+ github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
+ github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=
+ github.com/oklog/run v1.1.0/go.mod h1:sVPdnTZT1zYwAJeCMu2Th4T21pA3FPOQRfWjQlk7DVU=
+-github.com/oklog/ulid v1.3.1/go.mod h1:CirwcVhetQ6Lv90oh/F+FBtV6XMibvdAFo93nm5qn4U=
+ github.com/olekukonko/tablewriter v0.0.0-20170122224234-a0225b3f23b5/go.mod h1:vsDQFd/mU46D+Z4whnwzcISnGGzXWMclvtLoiIKAKIo=
+-github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N7AbDhec=
+-github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
+ github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
+ github.com/onsi/ginkgo v1.7.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
+ github.com/onsi/ginkgo v1.12.1/go.mod h1:zj2OWP4+oCPe1qIXoGWkgMRwljMUYCdkwsT2108oapk=
+ github.com/onsi/ginkgo v1.14.0/go.mod h1:iSB4RoI2tjJc9BBv4NKIKWKya62Rps+oPG/Lv9klQyY=
+ github.com/onsi/ginkgo v1.16.4 h1:29JGrr5oVBm5ulCWet69zQkzWipVXIol6ygQUe/EzNc=
+ github.com/onsi/ginkgo v1.16.4/go.mod h1:dX+/inL/fNMqNlz0e9LfyB9TswhZpCVdJM/Z6Vvnwo0=
+-github.com/onsi/ginkgo/v2 v2.22.2 h1:/3X8Panh8/WwhU/3Ssa6rCKqPLuAkVY2I0RoyDLySlU=
+-github.com/onsi/ginkgo/v2 v2.22.2/go.mod h1:oeMosUL+8LtarXBHu/c0bx2D/K9zyQ6uX3cTyztHwsk=
+-github.com/onsi/gomega v1.4.1/go.mod h1:C1qb7wdrVGGVU+Z6iS04AVkA3Q65CEZX59MT0QO5uiA=
+ github.com/onsi/gomega v1.4.3/go.mod h1:ex+gbHU/CVuBBDIJjb2X0qEXbFg53c61hWP/1CpauHY=
+ github.com/onsi/gomega v1.7.1/go.mod h1:XdKZgCCFLUoM/7CFJVPcG8C1xQ1AJ0vpAezJrB7JYyY=
+ github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1ybHNo=
+@@ -1030,15 +940,11 @@ github.com/prometheus/procfs v0.1.3/go.mod h1:lV6e/gmhEcM9IjHGsFOCxxuZ+z1YqCvr4O
+ github.com/prometheus/procfs v0.3.0/go.mod h1:lV6e/gmhEcM9IjHGsFOCxxuZ+z1YqCvr4OA4YeYWdaU=
+ github.com/prometheus/procfs v0.15.1 h1:YagwOFzUgYfKKHX6Dr+sHT7km/hxC76UB0learggepc=
+ github.com/prometheus/procfs v0.15.1/go.mod h1:fB45yRUv8NstnjriLhBQLuOUt+WW4BsoGhij/e3PBqk=
+-github.com/prometheus/tsdb v0.10.0 h1:If5rVCMTp6W2SiRAQFlbpJNgVlgMEd+U2GZckwK38ic=
+-github.com/prometheus/tsdb v0.10.0/go.mod h1:oi49uRhEe9dPUTlS3JRZOwJuVi6tmh10QSgwXEyGCt4=
+ github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
+ github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 h1:N/ElC8H3+5XpJzTSTfLsJV/mx9Q9g7kxmchpfZyxgzM=
+ github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
+ github.com/regen-network/gocuke v0.6.2 h1:pHviZ0kKAq2U2hN2q3smKNxct6hS0mGByFMHGnWA97M=
+ github.com/regen-network/gocuke v0.6.2/go.mod h1:zYaqIHZobHyd0xOrHGPQjbhGJsuZ1oElx150u2o1xuk=
+-github.com/rjeczalik/notify v0.9.3 h1:6rJAzHTGKXGj76sbRgDiDcYj/HniypXmSJo1SWakZeY=
+-github.com/rjeczalik/notify v0.9.3/go.mod h1:gF3zSOrafR9DQEWSE8TjfI9NkooDxbyT4UgRGKZA0lc=
+ github.com/rogpeppe/fastuuid v0.0.0-20150106093220-6724a57986af/go.mod h1:XWv6SoW27p1b0cqNHllgS5HIMJraePCO15w5zCzIWYg=
+ github.com/rogpeppe/fastuuid v1.2.0/go.mod h1:jVj6XXZzXRy/MSR5jhDC/2q6DgLz+nrA6LYCDYWNEvQ=
+ github.com/rogpeppe/go-internal v1.3.0/go.mod h1:M8bDsm7K2OlrFYOpmOWEs/qY81heoFRclV5y23lUDJ4=
+@@ -1047,8 +953,8 @@ github.com/rogpeppe/go-internal v1.8.0/go.mod h1:WmiCO8CzOY8rg0OYDC4/i/2WRWAB6po
+ github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
+ github.com/rogpeppe/go-internal v1.12.0 h1:exVL4IDcn6na9z1rAb56Vxr+CgyK3nn3O+epU5NdKM8=
+ github.com/rogpeppe/go-internal v1.12.0/go.mod h1:E+RYuTGaKKdloAfM02xzb0FW3Paa99yedzYV+kq4uf4=
+-github.com/rollchains/wasmd v0.50.0-evm h1:Q+zkyrHG1OpBHoDLEsZ3lFnkOxhuRzYgbVsK8xaTn94=
+-github.com/rollchains/wasmd v0.50.0-evm/go.mod h1:DNg2PW+6ublDwg723H+p9NmopjDSMj3nZ96xlJhQJ0A=
++github.com/rollchains/cosmos-sdk v0.50.11 h1:hSBJoEcaOkVlx17wjc7JyCdVHThUtEhv1vBEsq+dLpY=
++github.com/rollchains/cosmos-sdk v0.50.11/go.mod h1:hrWEFMU1eoXqLJeE6VVESpJDQH67FS1nnMrQIjO2daw=
+ github.com/rs/cors v1.7.0/go.mod h1:gFx+x8UowdsKA9AchylcLynDq+nNFfI8FkUZdN/jGCU=
+ github.com/rs/cors v1.11.1 h1:eU3gRzXLRK57F5rKMGMZURNdIG4EoAmX8k94r9wXWHA=
+ github.com/rs/cors v1.11.1/go.mod h1:XyqrcTp5zjWr1wsJ8PIRZssZ8b/WMcMf71DJnit4EMU=
+@@ -1056,7 +962,6 @@ github.com/rs/xid v1.5.0/go.mod h1:trrq9SKmegXys3aeAKXMUTdJsYXVwGY3RLcfgqegfbg=
+ github.com/rs/zerolog v1.33.0 h1:1cU2KZkvPxNyfgEmhHAz/1A9Bz+llsdYzklWFzgp0r8=
+ github.com/rs/zerolog v1.33.0/go.mod h1:/7mN4D5sKwJLZQ2b/znpjC3/GQWY/xaDXUM0kKWRHss=
+ github.com/russross/blackfriday/v2 v2.0.1/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
+-github.com/russross/blackfriday/v2 v2.1.0 h1:JIOH55/0cWyOuilr9/qlrm0BSXldqnqwMsf35Ld67mk=
+ github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
+ github.com/ryanuber/columnize v0.0.0-20160712163229-9b3edd62028f/go.mod h1:sm1tb6uqfes/u+d4ooFouqFdy9/2g9QGwK3SQygK0Ts=
+ github.com/sagikazarmark/locafero v0.4.0 h1:HApY1R9zGo4DBgr7dqsTH/JJxLTTsOt7u6keLGt6kNQ=
+@@ -1067,8 +972,6 @@ github.com/samuel/go-zookeeper v0.0.0-20190923202752-2cc03de413da/go.mod h1:gi+0
+ github.com/sasha-s/go-deadlock v0.3.5 h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb2NsU=
+ github.com/sasha-s/go-deadlock v0.3.5/go.mod h1:bugP6EGbdGYObIlx7pUZtWqlvo8k9H6vCBBsiChJQ5U=
+ github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529/go.mod h1:DxrIzT+xaE7yg65j358z/aeFdxmN0P9QXhEzd20vsDc=
+-github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible h1:Bn1aCHHRnjv4Bl16T8rcaFjYSrGrIZvpiGO6P3Q4GpU=
+-github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible/go.mod h1:5b4v6he4MtMOwMlS0TUMTu2PcXUg8+E1lC7eC3UO/RA=
+ github.com/shurcooL/sanitized_anchor_name v1.0.0/go.mod h1:1NzhyTcUVG4SuEtjjoZeVRXNmyL/1OwPU0+IJeTBvfc=
+ github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
+ github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
+@@ -1095,10 +998,6 @@ github.com/spf13/pflag v1.0.5 h1:iy+VFUOCP1a+8yFto/drg2CJ5u0yRoB7fZw3DKv/JXA=
+ github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
+ github.com/spf13/viper v1.17.0 h1:I5txKw7MJasPL/BrfkbA0Jyo/oELqVmux4pR/UxOMfI=
+ github.com/spf13/viper v1.17.0/go.mod h1:BmMMMLQXSbcHK6KAOiFLz0l5JHrU89OdIRHvsk0+yVI=
+-github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5 h1:5v7j5P2QTOiV3Uftja+1bwwuyaGe/lpnsC7dZNgoo/U=
+-github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5/go.mod h1:PHUr2nW1WC6isM2ar72DLQ/Cd/ibvUntm/YU6ML/eG0=
+-github.com/strangelove-ventures/os v0.1.0 h1:a03pRcwyX8PA/NzzW1bF7ylJuaOKWpCL6MsXmFJ0/h4=
+-github.com/strangelove-ventures/os v0.1.0/go.mod h1:zgs0dJ8M4AQtRDtGNCa6h2XqQDh4a5ar4Za+B80YJwc=
+ github.com/strangelove-ventures/poa v0.50.3 h1:Ib9t8TObkd8LWQYt+pFxJVnxA4jEfr0HM8bgBytXcE4=
+ github.com/strangelove-ventures/poa v0.50.3/go.mod h1:hCoBNFkrAxmRvVVXVsaIN8j3jpxzBUxDXZ0LP3NrRyw=
+ github.com/strangelove-ventures/tokenfactory v0.50.3 h1:MccxHYUHjMHDOxcmx/HJs1mU4zVhli1f4sz3126Wzr8=
+@@ -1134,38 +1033,18 @@ github.com/tendermint/go-amino v0.16.0 h1:GyhmgQKvqF82e2oZeuMSp9JTN0N09emoSZlb2l
+ github.com/tendermint/go-amino v0.16.0/go.mod h1:TQU0M1i/ImAo+tYpZi73AU3V/dKeCoMC9Sphe2ZwGME=
+ github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
+ github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
+-github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
+-github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=
+-github.com/tidwall/gjson v1.18.0/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
+-github.com/tidwall/match v1.1.1 h1:+Ho715JplO36QYgwN9PGYNhgZvoUSc9X2c80KVTi+GA=
+-github.com/tidwall/match v1.1.1/go.mod h1:eRSPERbgtNPcGhD8UCthc6PmLEQXEWd3PRB5JTxsfmM=
+-github.com/tidwall/pretty v1.2.0 h1:RWIZEg2iJ8/g6fDDYzMpobmaoGh5OLl4AXtGUGPcqCs=
+-github.com/tidwall/pretty v1.2.0/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
+-github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
+-github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+-github.com/tklauser/go-sysconf v0.3.11 h1:89WgdJhk5SNwJfu+GKyYveZ4IaJ7xAkecBo+KdJV0CM=
+-github.com/tklauser/go-sysconf v0.3.11/go.mod h1:GqXfhXY3kiPa0nAXPDIQIWzJbMCB7AmcWpGR8lSZfqI=
+-github.com/tklauser/numcpus v0.6.0 h1:kebhY2Qt+3U6RNK7UqpYNA+tJ23IBEGKkB7JQBfDYms=
+-github.com/tklauser/numcpus v0.6.0/go.mod h1:FEZLMke0lhOUG6w2JadTzp0a+Nl8PF/GFkQ5UVIcaL4=
+ github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
+ github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
+ github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
+ github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
+-github.com/tyler-smith/go-bip39 v1.1.0 h1:5eUemwrMargf3BSLRRCalXT93Ns6pQJIjYQN2nyfOP8=
+-github.com/tyler-smith/go-bip39 v1.1.0/go.mod h1:gUYDtqQw1JS3ZJ8UWVcGTGqqr6YIN3CWg+kkNaLt55U=
+ github.com/ugorji/go v1.2.7/go.mod h1:nF9osbDWLy6bDVv/Rtoh6QgnvNDpmCalQV5urGCCS6M=
+ github.com/ugorji/go/codec v1.2.7/go.mod h1:WGN1fab3R1fzQlVQTkfxVtIBhWDRqOviHU95kRgeqEY=
+ github.com/ulikunitz/xz v0.5.10/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
+ github.com/ulikunitz/xz v0.5.11 h1:kpFauv27b6ynzBNT/Xy+1k+fK4WswhN/6PN5WhFAGw8=
+ github.com/ulikunitz/xz v0.5.11/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
+ github.com/urfave/cli v1.20.0/go.mod h1:70zkFmudgCuE/ngEzBv17Jvp/497gISqfk5gWijbERA=
+-github.com/urfave/cli v1.22.1 h1:+mkCCcOFKPnCmVYVcURKps1Xe+3zP90gSYGNfRkjoIY=
+ github.com/urfave/cli v1.22.1/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
+-github.com/urfave/cli/v2 v2.10.2 h1:x3p8awjp/2arX+Nl/G2040AZpOCHS/eMJJ1/a+mye4Y=
+-github.com/urfave/cli/v2 v2.10.2/go.mod h1:f8iq5LtQ/bLxafbdBSLPPNsgaW0l/2fYYEHhAyPlwvo=
+ github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
+-github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 h1:bAn7/zixMGCfxrRTfdpNzjtPYqr8smhKouy9mxVdGPU=
+-github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673/go.mod h1:N3UwUGtsrSj3ccvlPHLoLsHnpR27oXr4ZE984MbSER8=
+ github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+ github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+ github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+@@ -1224,7 +1103,6 @@ go.uber.org/zap v1.13.0/go.mod h1:zwrFLgMcdUuIBviXEYEH1YKNaOBnKXsx2IPda5bBwHM=
+ go.uber.org/zap v1.18.1/go.mod h1:xg/QME4nWcxGxrpdeYfq7UvYrLh66cuVKdrbD1XF/NI=
+ golang.org/x/arch v0.3.0 h1:02VY4/ZcO/gBOH6PUaoiptASxtXU10jazRCP865E97k=
+ golang.org/x/arch v0.3.0/go.mod h1:5om86z9Hs0C8fWVUuoMHwpExlXzs5Tkyp9hOrfG7pp8=
+-golang.org/x/crypto v0.0.0-20170930174604-9419663f5a44/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
+ golang.org/x/crypto v0.0.0-20180904163835-0709b304e793/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
+ golang.org/x/crypto v0.0.0-20181029021203-45a5f77698d3/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
+ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
+@@ -1277,9 +1155,6 @@ golang.org/x/mod v0.4.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+ golang.org/x/mod v0.4.1/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+ golang.org/x/mod v0.4.2/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+ golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4=
+-golang.org/x/mod v0.19.0 h1:fEdghXQSo20giMthA7cd28ZC+jts4amQ3YMXiP5oMQ8=
+-golang.org/x/mod v0.19.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=
+-golang.org/x/net v0.0.0-20180719180050-a680a1efc54d/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
+ golang.org/x/net v0.0.0-20180724234803-3673e40ba225/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
+ golang.org/x/net v0.0.0-20180826012351-8a410e7b638d/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
+ golang.org/x/net v0.0.0-20180906233101-161cd47e91fd/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
+@@ -1388,7 +1263,6 @@ golang.org/x/sys v0.0.0-20180823144017-11551d06cbcc/go.mod h1:STP8DvDyc/dI5b8T5h
+ golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+-golang.org/x/sys v0.0.0-20180926160741-c2ed4eda69e7/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181026203630-95b1ffbd15a5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181107165924-66b7b1311ac8/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181116152217-5ac8a444bdc5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+@@ -1404,7 +1278,6 @@ golang.org/x/sys v0.0.0-20190624142023-c5567b49c5d0/go.mod h1:h1NjWce9XRLGQEsW7w
+ golang.org/x/sys v0.0.0-20190726091711-fc99dfbffb4e/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20190826190057-c7b8b68b1456/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20190904154756-749cb33beabd/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+-golang.org/x/sys v0.0.0-20190916202348-b4ddaad3f8a3/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20191001151750-bb3f8db39f24/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20191005200804-aed5e4c7ecf9/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20191026070338-33540a1f6037/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+@@ -1442,7 +1315,6 @@ golang.org/x/sys v0.0.0-20210220050731-9a76102bfb43/go.mod h1:h1NjWce9XRLGQEsW7w
+ golang.org/x/sys v0.0.0-20210305230114-8fe3ee5dd75b/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210315160823-c6e025ad8005/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210320140829-1e4c9ba3b0c4/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+-golang.org/x/sys v0.0.0-20210324051608-47abb6519492/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210330210617-4fbd30eecc44/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210423082822-04245dca01da/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210510120138-977fb7262007/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+@@ -1479,7 +1351,6 @@ golang.org/x/sys v0.0.0-20220728004956-3c1f35247d10/go.mod h1:oPkhp1MJrh7nUepCBc
+ golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.0.0-20221010170243-090e33056c14/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+-golang.org/x/sys v0.2.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.5.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.12.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+@@ -1571,8 +1442,6 @@ golang.org/x/tools v0.1.3/go.mod h1:o0xws9oXOQQZyjljx8fwUC0k7L1pTE6eaCbjGeHmOkk=
+ golang.org/x/tools v0.1.4/go.mod h1:o0xws9oXOQQZyjljx8fwUC0k7L1pTE6eaCbjGeHmOkk=
+ golang.org/x/tools v0.1.5/go.mod h1:o0xws9oXOQQZyjljx8fwUC0k7L1pTE6eaCbjGeHmOkk=
+ golang.org/x/tools v0.1.12/go.mod h1:hNGJHUnrk76NpqgfD5Aqm5Crs+Hm0VOH/i9J2+nxYbc=
+-golang.org/x/tools v0.28.0 h1:WuB6qZ4RPCQo5aP3WdKZS7i595EdWqWR8vqJTlwTVK8=
+-golang.org/x/tools v0.28.0/go.mod h1:dcIOrVd3mfQKTgrDVQHqCPMWy6lnhfhtX3hLXYVLfRw=
+ golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+ golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+ golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+@@ -1831,8 +1700,6 @@ gopkg.in/fsnotify.v1 v1.4.7/go.mod h1:Tz8NjZHkW78fSQdbUxIjBTcgA1z1m8ZHf0WmKUhAMy
+ gopkg.in/gcfg.v1 v1.2.3/go.mod h1:yesOnuUOFQAhST5vPY4nbZsb/huCgGGXlipJsBn0b3o=
+ gopkg.in/ini.v1 v1.67.0 h1:Dgnx+6+nfE+IfzjUEISNeydPJh9AXNNsWbGP9KzCsOA=
+ gopkg.in/ini.v1 v1.67.0/go.mod h1:pNLf8WUiyNEtQjuu5G5vTm06TEv9tsIgeAvK8hOrP4k=
+-gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce h1:+JknDZhAj8YMt7GC73Ei8pv4MzjDUNPHgQWJdtMAaDU=
+-gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce/go.mod h1:5AcXVHNjg+BDxry382+8OKon8SEWiKktQR07RKPsv1c=
+ gopkg.in/resty.v1 v1.12.0/go.mod h1:mDo4pnntr5jdWRML875a/NmxYqAlA73dVijT2AXvQQo=
+ gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 h1:uRGJdciOHaEIrze2W8Q3AKkepLTh2hOroT7a+7czfdQ=
+ gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7/go.mod h1:dt/ZhP58zS4L8KSrWDmTeBkI65Dw0HsyUHuEVlX15mw=
+diff --git a/interchaintest/go.mod b/interchaintest/go.mod
+index 40a3ee6..a594c09 100755
+--- a/interchaintest/go.mod
++++ b/interchaintest/go.mod
+@@ -31,7 +31,6 @@ require (
+ 	cosmossdk.io/math v1.5.0
+ 	github.com/cosmos/cosmos-sdk v0.50.11
+ 	github.com/cosmos/ibc-go/v8 v8.5.2
+-	github.com/cosmos/evm v0.0.0-00010101000000-000000000000
+ 	github.com/strangelove-ventures/interchaintest/v8 v8.8.1
+ 	github.com/strangelove-ventures/poa v0.50.3
+ 	github.com/strangelove-ventures/tokenfactory v0.50.3
+@@ -47,6 +46,7 @@ require (
+ 	cloud.google.com/go/iam v1.1.9 // indirect
+ 	cloud.google.com/go/storage v1.41.0 // indirect
+ 	cosmossdk.io/api v0.7.6 // indirect
++	cosmossdk.io/client/v2 v2.0.0-beta.7 // indirect
+ 	cosmossdk.io/collections v0.4.0 // indirect
+ 	cosmossdk.io/core v0.12.0 // indirect
+ 	cosmossdk.io/depinject v1.1.0 // indirect
+@@ -71,7 +71,6 @@ require (
+ 	github.com/Microsoft/go-winio v0.6.2 // indirect
+ 	github.com/StackExchange/wmi v1.2.1 // indirect
+ 	github.com/StirlingMarketingGroup/go-namecase v1.0.0 // indirect
+-	github.com/VictoriaMetrics/fastcache v1.6.0 // indirect
+ 	github.com/avast/retry-go/v4 v4.5.1 // indirect
+ 	github.com/aws/aws-sdk-go v1.46.6 // indirect
+ 	github.com/beorn7/perks v1.0.1 // indirect
+@@ -80,6 +79,7 @@ require (
+ 	github.com/bits-and-blooms/bitset v1.17.0 // indirect
+ 	github.com/btcsuite/btcd v0.24.2 // indirect
+ 	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
++	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
+ 	github.com/bytedance/sonic v1.12.3 // indirect
+ 	github.com/bytedance/sonic/loader v0.2.0 // indirect
+ 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+@@ -124,6 +124,7 @@ require (
+ 	github.com/docker/go-units v0.5.0 // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/dvsekhvalnov/jose2go v1.6.0 // indirect
++	github.com/edsrzf/mmap-go v1.1.0 // indirect
+ 	github.com/emicklei/dot v1.6.2 // indirect
+ 	github.com/ethereum/go-ethereum v1.15.3 // indirect
+ 	github.com/fatih/color v1.16.0 // indirect
+@@ -149,6 +150,7 @@ require (
+ 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
+ 	github.com/google/go-cmp v0.6.0 // indirect
+ 	github.com/google/orderedcode v0.0.1 // indirect
++	github.com/google/pprof v0.0.0-20241210010833-40e02aabc2ad // indirect
+ 	github.com/google/s2a-go v0.1.7 // indirect
+ 	github.com/google/uuid v1.6.0 // indirect
+ 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
+@@ -174,8 +176,6 @@ require (
+ 	github.com/hashicorp/hcl v1.0.0 // indirect
+ 	github.com/hashicorp/yamux v0.1.1 // indirect
+ 	github.com/hdevalence/ed25519consensus v0.1.0 // indirect
+-	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
+-	github.com/holiman/uint256 v1.3.2 // indirect
+ 	github.com/huandu/skiplist v1.2.0 // indirect
+ 	github.com/iancoleman/strcase v0.3.0 // indirect
+ 	github.com/icza/dyno v0.0.0-20230330125955-09f820a8d9c0 // indirect
+@@ -196,7 +196,6 @@ require (
+ 	github.com/manifoldco/promptui v0.9.0 // indirect
+ 	github.com/mattn/go-colorable v0.1.13 // indirect
+ 	github.com/mattn/go-isatty v0.0.20 // indirect
+-	github.com/mattn/go-runewidth v0.0.15 // indirect
+ 	github.com/mimoo/StrobeGo v0.0.0-20220103164710-9a04d6ca976b // indirect
+ 	github.com/minio/highwayhash v1.0.3 // indirect
+ 	github.com/minio/sha256-simd v1.0.1 // indirect
+@@ -217,7 +216,7 @@ require (
+ 	github.com/ncruces/go-strftime v0.1.9 // indirect
+ 	github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a // indirect
+ 	github.com/oklog/run v1.1.0 // indirect
+-	github.com/olekukonko/tablewriter v0.0.5 // indirect
++	github.com/onsi/gomega v1.36.2 // indirect
+ 	github.com/opencontainers/go-digest v1.0.0 // indirect
+ 	github.com/opencontainers/image-spec v1.1.0-rc5 // indirect
+ 	github.com/pelletier/go-toml v1.9.5 // indirect
+@@ -233,7 +232,7 @@ require (
+ 	github.com/prometheus/tsdb v0.10.0 // indirect
+ 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
+ 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+-	github.com/rivo/uniseg v0.4.3 // indirect
++	github.com/rjeczalik/notify v0.9.3 // indirect
+ 	github.com/rogpeppe/go-internal v1.12.0 // indirect
+ 	github.com/rs/cors v1.11.1 // indirect
+ 	github.com/rs/zerolog v1.33.0 // indirect
+@@ -248,6 +247,7 @@ require (
+ 	github.com/spf13/cobra v1.8.1 // indirect
+ 	github.com/spf13/pflag v1.0.5 // indirect
+ 	github.com/spf13/viper v1.19.0 // indirect
++	github.com/status-im/keycard-go v0.2.0 // indirect
+ 	github.com/subosito/gotenv v1.6.0 // indirect
+ 	github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d // indirect
+ 	github.com/tendermint/go-amino v0.16.0 // indirect
+@@ -256,7 +256,6 @@ require (
+ 	github.com/tidwall/gjson v1.18.0 // indirect
+ 	github.com/tidwall/match v1.1.1 // indirect
+ 	github.com/tidwall/pretty v1.2.0 // indirect
+-	github.com/tidwall/sjson v1.2.5 // indirect
+ 	github.com/tklauser/go-sysconf v0.3.12 // indirect
+ 	github.com/tklauser/numcpus v0.6.1 // indirect
+ 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+@@ -272,6 +271,7 @@ require (
+ 	go.opentelemetry.io/otel v1.32.0 // indirect
+ 	go.opentelemetry.io/otel/metric v1.32.0 // indirect
+ 	go.opentelemetry.io/otel/trace v1.32.0 // indirect
++	go.uber.org/mock v0.5.0 // indirect
+ 	go.uber.org/multierr v1.11.0 // indirect
+ 	golang.org/x/arch v0.3.0 // indirect
+ 	golang.org/x/crypto v0.32.0 // indirect
+diff --git a/interchaintest/go.sum b/interchaintest/go.sum
+index c872ef3..b9b031f 100755
+--- a/interchaintest/go.sum
++++ b/interchaintest/go.sum
+@@ -263,8 +263,6 @@ github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuy
+ github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
+ github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
+ github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d/go.mod h1:rBZYJk541a8SKzHPHnH3zbiI+7dagKZ0cgpgrD7Fyho=
+-github.com/allegro/bigcache v1.2.1-0.20190218064605-e24eb225f156 h1:eMwmnE/GDgah4HI848JfFxHt+iPb26b4zyfspmqY0/8=
+-github.com/allegro/bigcache v1.2.1-0.20190218064605-e24eb225f156/go.mod h1:Cb/ax3seSYIx7SuZdm2G2xzfwmv3TPSk2ucNfQESPXM=
+ github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
+ github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+ github.com/apache/thrift v0.13.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+@@ -448,8 +446,6 @@ github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13/go.mod h1:SqUrOPUn
+ github.com/dgryski/go-sip13 v0.0.0-20181026042036-e10d5fee7954/go.mod h1:vAd38F8PWV+bWy6jNmig1y/TA+kYO4g3RSRF0IAv0no=
+ github.com/distribution/reference v0.5.0 h1:/FUIFXtfc/x2gpa5/VGfiGLuOIdYa1t65IKK2OFGvA0=
+ github.com/distribution/reference v0.5.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
+-github.com/dlclark/regexp2 v1.4.1-0.20201116162257-a2a8dda75c91 h1:Izz0+t1Z5nI16/II7vuEo/nHjodOg0p7+OiDpjX5t1E=
+-github.com/dlclark/regexp2 v1.4.1-0.20201116162257-a2a8dda75c91/go.mod h1:2pZnwuY/m+8K6iRw6wQdMtk+rH5tNGR1i55kozfMjCc=
+ github.com/docker/distribution v2.8.3+incompatible h1:AtKxIZ36LoNK51+Z6RpzLpddBirtxJnzDrHLEKxTAYk=
+ github.com/docker/distribution v2.8.3+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
+ github.com/docker/docker v24.0.9+incompatible h1:HPGzNmwfLZWdxHqK9/II92pyi1EpYKsAqcl4G0Of9v0=
+@@ -458,8 +454,6 @@ github.com/docker/go-connections v0.5.0 h1:USnMq7hx7gwdVZq1L49hLXaFtUdTADjXGp+uj
+ github.com/docker/go-connections v0.5.0/go.mod h1:ov60Kzw0kKElRwhNs9UlUHAE/F9Fe6GLaXnqyDdmEXc=
+ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4=
+ github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
+-github.com/dop251/goja v0.0.0-20220405120441-9037c2b61cbf h1:Yt+4K30SdjOkRoRRm3vYNQgR+/ZIy0RmeUDZo7Y8zeQ=
+-github.com/dop251/goja v0.0.0-20220405120441-9037c2b61cbf/go.mod h1:R9ET47fwRVRPZnOGvHxxhuZcbrMCuiqOz3Rlrh4KSnk=
+ github.com/dustin/go-humanize v0.0.0-20171111073723-bb3d318650d4/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
+ github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
+ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
+@@ -489,8 +483,6 @@ github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe h1:CKvjP3Cc
+ github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe/go.mod h1:Bm6h8ZkYgVTytHK5vhHOMKw9OHyiumm3b1UbkYIJ/Ug=
+ github.com/evmos/go-ethereum v1.10.26-evmos-rc4 h1:vwDVMScuB2KSu8ze5oWUuxm6v3bMUp6dL3PWvJNJY+I=
+ github.com/evmos/go-ethereum v1.10.26-evmos-rc4/go.mod h1:/6CsT5Ceen2WPLI/oCA3xMcZ5sWMF/D46SjM/ayY0Oo=
+-github.com/cosmos/evm/example_chain v0.0.0-20240924163020-b2a4187dad50 h1:zWJYHc0WXE5YnuzYJnUzjMwuloxSz5ALCoNSzcuhKsA=
+-github.com/cosmos/evm/example_chain v0.0.0-20240924163020-b2a4187dad50/go.mod h1:+SPMqw9wtbWO3jG02uLbLtVVjMHBldmXTN51kxbWqJ8=
+ github.com/fatih/color v1.7.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
+ github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
+ github.com/fatih/color v1.16.0 h1:zmkK9Ngbjj+K0yRhTVONQh1p/HknKYSlNT+vZCzyokM=
+@@ -547,8 +539,6 @@ github.com/go-playground/assert/v2 v2.0.1/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvSc
+ github.com/go-playground/locales v0.13.0/go.mod h1:taPMhCMXrRLJO55olJkUXHZBHCxTMfnGwq/HNwmWNS8=
+ github.com/go-playground/universal-translator v0.17.0/go.mod h1:UkSxE5sNxxRwHyU+Scu5vgOQjsIJAF8j9muTVoKLVtA=
+ github.com/go-playground/validator/v10 v10.2.0/go.mod h1:uOYAAleCW8F/7oMFd6aG0GOhaH6EGOAJShg8Id5JGkI=
+-github.com/go-sourcemap/sourcemap v2.1.3+incompatible h1:W1iEw64niKVGogNgBN3ePyLFfuisuzeidWPMPWmECqU=
+-github.com/go-sourcemap/sourcemap v2.1.3+incompatible/go.mod h1:F8jJfvm2KbVjc5NqelyYJmf/v5J0dwNLS2mL4sNA1Jg=
+ github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
+ github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
+ github.com/go-stack/stack v1.8.1 h1:ntEHSVwIt7PNXNpgPmVfMrNhLtgjlmnZha2kOpuRiDw=
+@@ -872,7 +862,6 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
+ github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
+ github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
+ github.com/mattn/go-runewidth v0.0.4/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
+-github.com/mattn/go-runewidth v0.0.9/go.mod h1:H031xJmbD/WCDINGzjvQ9THkh0rPKHF+m2gUSrubnMI=
+ github.com/mattn/go-runewidth v0.0.15 h1:UNAjwbU9l54TA3KzvqLGxwWjHmMgBUVhBiTjelZgg3U=
+ github.com/mattn/go-runewidth v0.0.15/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
+ github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
+@@ -1058,7 +1047,6 @@ github.com/regen-network/protobuf v1.3.3-alpha.regen.1 h1:OHEc+q5iIAXpqiqFKeLpu5
+ github.com/regen-network/protobuf v1.3.3-alpha.regen.1/go.mod h1:2DjTFR1HhMQhiWC5sZ4OhQ3+NtdbZ6oBDKQwq5Ou+FI=
+ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
+ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+-github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
+ github.com/rivo/uniseg v0.4.3 h1:utMvzDsuh3suAEnhH0RdHmoPbU648o6CvXxTx4SBMOw=
+ github.com/rivo/uniseg v0.4.3/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
+ github.com/rjeczalik/notify v0.9.3 h1:6rJAzHTGKXGj76sbRgDiDcYj/HniypXmSJo1SWakZeY=
+@@ -1124,8 +1112,6 @@ github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5 h1
+ github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5/go.mod h1:PHUr2nW1WC6isM2ar72DLQ/Cd/ibvUntm/YU6ML/eG0=
+ github.com/strangelove-ventures/interchaintest/v8 v8.8.1 h1:F7xqxZ8Nl9ttKHQqVjgJ2lCQrQxiRjJq6EVdA/YaGeY=
+ github.com/strangelove-ventures/interchaintest/v8 v8.8.1/go.mod h1:AFFimVWInij/cZMjNbKYMW6EgX0SjHKmIl/GS/akMd8=
+-github.com/strangelove-ventures/os v0.1.0 h1:a03pRcwyX8PA/NzzW1bF7ylJuaOKWpCL6MsXmFJ0/h4=
+-github.com/strangelove-ventures/os v0.1.0/go.mod h1:zgs0dJ8M4AQtRDtGNCa6h2XqQDh4a5ar4Za+B80YJwc=
+ github.com/strangelove-ventures/poa v0.50.3 h1:Ib9t8TObkd8LWQYt+pFxJVnxA4jEfr0HM8bgBytXcE4=
+ github.com/strangelove-ventures/poa v0.50.3/go.mod h1:hCoBNFkrAxmRvVVXVsaIN8j3jpxzBUxDXZ0LP3NrRyw=
+ github.com/strangelove-ventures/tokenfactory v0.50.3 h1:MccxHYUHjMHDOxcmx/HJs1mU4zVhli1f4sz3126Wzr8=
+@@ -1168,15 +1154,12 @@ github.com/tendermint/tm-db v0.6.6 h1:EzhaOfR0bdKyATqcd5PNeyeq8r+V4bRPHBfyFdD9kG
+ github.com/tendermint/tm-db v0.6.6/go.mod h1:wP8d49A85B7/erz/r4YbKssKw6ylsO/hKtFk7E1aWZI=
+ github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
+ github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
+-github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
+ github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=
+ github.com/tidwall/gjson v1.18.0/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
+ github.com/tidwall/match v1.1.1 h1:+Ho715JplO36QYgwN9PGYNhgZvoUSc9X2c80KVTi+GA=
+ github.com/tidwall/match v1.1.1/go.mod h1:eRSPERbgtNPcGhD8UCthc6PmLEQXEWd3PRB5JTxsfmM=
+ github.com/tidwall/pretty v1.2.0 h1:RWIZEg2iJ8/g6fDDYzMpobmaoGh5OLl4AXtGUGPcqCs=
+ github.com/tidwall/pretty v1.2.0/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
+-github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
+-github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+ github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU=
+ github.com/tklauser/go-sysconf v0.3.12/go.mod h1:Ho14jnntGE1fpdOqQEEaiKRpvIavV0hSfmBq8nJbHYI=
+ github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk=
+@@ -1427,6 +1410,7 @@ golang.org/x/sys v0.0.0-20180823144017-11551d06cbcc/go.mod h1:STP8DvDyc/dI5b8T5h
+ golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
++golang.org/x/sys v0.0.0-20180926160741-c2ed4eda69e7/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181026203630-95b1ffbd15a5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181107165924-66b7b1311ac8/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20181116152217-5ac8a444bdc5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+@@ -1479,7 +1463,6 @@ golang.org/x/sys v0.0.0-20210220050731-9a76102bfb43/go.mod h1:h1NjWce9XRLGQEsW7w
+ golang.org/x/sys v0.0.0-20210305230114-8fe3ee5dd75b/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210315160823-c6e025ad8005/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210320140829-1e4c9ba3b0c4/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+-golang.org/x/sys v0.0.0-20210324051608-47abb6519492/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210330210617-4fbd30eecc44/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210423082822-04245dca01da/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210510120138-977fb7262007/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+diff --git a/interchaintest/setup.go b/interchaintest/setup.go
+index bc0c289..50acbf8 100755
+--- a/interchaintest/setup.go
++++ b/interchaintest/setup.go
+@@ -18,20 +18,15 @@ import (
+ 	ibcconntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
+ 	poa "github.com/strangelove-ventures/poa"
+ 	tokenfactory "github.com/strangelove-ventures/tokenfactory/x/tokenfactory/types"
+-
+-	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+-	"github.com/cosmos/evm/crypto/ethsecp256k1"
+-	evmtypes "github.com/cosmos/evm/x/vm/types"
+ )
+ 
+ var (
+ 	VotingPeriod     = "15s"
+ 	MaxDepositPeriod = "10s"
+ 
+-	Denom = "token"
+-	Name  = "testevm"
+-
+-	ChainID = "localchain_9000-1"
++	Denom   = "token"
++	Name    = "testevm"
++	ChainID = "localchain-1"
+ 	Binary  = "simd"
+ 	Bech32  = "cosmos"
+ 	ibcPath = "ibc-path"
+@@ -42,8 +37,6 @@ var (
+ 
+ 	ChainImage = ibc.NewDockerImage("testevm", "local", "1025:1025")
+ 
+-	Precompiles = []string{"0x0000000000000000000000000000000000000100", "0x0000000000000000000000000000000000000400", "0x0000000000000000000000000000000000000800", "0x0000000000000000000000000000000000000801", "0x0000000000000000000000000000000000000802", "0x0000000000000000000000000000000000000803", "0x0000000000000000000000000000000000000804", "0x0000000000000000000000000000000000000805"}
+-
+ 	DefaultGenesis = []cosmos.GenesisKV{
+ 		// default
+ 		cosmos.NewGenesisKV("app_state.gov.params.voting_period", VotingPeriod),
+@@ -53,10 +46,7 @@ var (
+ 		// tokenfactory: set create cost in set denom or in gas usage.
+ 		cosmos.NewGenesisKV("app_state.tokenfactory.params.denom_creation_fee", nil),
+ 		cosmos.NewGenesisKV("app_state.tokenfactory.params.denom_creation_gas_consume", 1), // cost 1 gas to create a new denom
+-		cosmos.NewGenesisKV("app_state.feemarket.params.no_base_fee", true),
+-		cosmos.NewGenesisKV("app_state.feemarket.params.base_fee", "0.000000000000000000"),
+-		cosmos.NewGenesisKV("app_state.evm.params.evm_denom", Denom),
+-		cosmos.NewGenesisKV("app_state.evm.params.active_static_precompiles", Precompiles),
++
+ 	}
+ 
+ 	DefaultChainConfig = ibc.ChainConfig{
+@@ -72,8 +62,7 @@ var (
+ 		Bin:            Binary,
+ 		Bech32Prefix:   Bech32,
+ 		Denom:          Denom,
+-
+-		CoinType:       "60",
++		CoinType:       "118",
+ 		GasPrices:      "0" + Denom,
+ 		TrustingPeriod: "504h",
+ 	}
+@@ -111,9 +100,6 @@ func GetEncodingConfig() *moduletestutil.TestEncodingConfig {
+ 	// TODO: add encoding types here for the modules you want to use
+ 	tokenfactory.RegisterInterfaces(cfg.InterfaceRegistry)
+ 	poa.RegisterInterfaces(cfg.InterfaceRegistry)
+-	evmtypes.RegisterInterfaces(cfg.InterfaceRegistry)
+-	cfg.InterfaceRegistry.RegisterImplementations((*cryptotypes.PubKey)(nil), &ethsecp256k1.PubKey{})
+-	cfg.InterfaceRegistry.RegisterImplementations((*cryptotypes.PrivKey)(nil), &ethsecp256k1.PrivKey{})
+ 	return &cfg
+ }
+ 
+diff --git a/scripts/test_node.sh b/scripts/test_node.sh
+index d73f854..ffcb3b8 100755
+--- a/scripts/test_node.sh
++++ b/scripts/test_node.sh
+@@ -2,17 +2,17 @@
+ # Run this script to quickly install, setup, and run the current version of the network without docker.
+ #
+ # Examples:
+-# CHAIN_ID="localchain_9000-1" HOME_DIR="~/.testevm" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
+-# CHAIN_ID="localchain_9000-2" HOME_DIR="~/.testevm" CLEAN=true RPC=36657 REST=2317 PROFF=6061 P2P=36656 GRPC=8090 GRPC_WEB=8091 ROSETTA=8081 BLOCK_TIME="500ms" sh scripts/test_node.sh
++# CHAIN_ID="localchain-1" HOME_DIR="~/.testevm" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
++# CHAIN_ID="localchain-2" HOME_DIR="~/.testevm" CLEAN=true RPC=36657 REST=2317 PROFF=6061 P2P=36656 GRPC=8090 GRPC_WEB=8091 ROSETTA=8081 BLOCK_TIME="500ms" sh scripts/test_node.sh
+ 
+ set -eu
+ 
+ export KEY="acc0"
+ export KEY2="acc1"
+ 
+-export CHAIN_ID=${CHAIN_ID:-"localchain_9000-1"}
++export CHAIN_ID=${CHAIN_ID:-"localchain-1"}
+ export MONIKER="localvalidator"
+-export KEYALGO="eth_secp256k1"
++export KEYALGO="secp256k1"
+ export KEYRING=${KEYRING:-"test"}
+ export HOME_DIR=$(eval echo "${HOME_DIR:-"~/.testevm"}")
+ export BINARY=${BINARY:-simd}
+@@ -70,9 +70,9 @@ from_scratch () {
+     echo $mnemonic | BINARY keys add $key --keyring-backend $KEYRING --algo $KEYALGO --recover
+   }
+ 
+-  # cosmos140fehngcrxvhdt84x729p3f0qmkmea8nt2uzux
++  # cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92
+   add_key $KEY "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
+-  # cosmos1r6yue0vuyj9m7xw78npspt9drq2tmtvg8h6r0d
++  # cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr
+   add_key $KEY2 "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
+ 
+   BINARY init $MONIKER --chain-id $CHAIN_ID --default-denom $DENOM
+@@ -164,4 +164,4 @@ sed -i -e 's/address = ":8080"/address = "0.0.0.0:'$ROSETTA'"/g' $HOME_DIR/confi
+ # Faster blocks
+ sed -i -e 's/timeout_commit = "5s"/timeout_commit = "'$BLOCK_TIME'"/g' $HOME_DIR/config/config.toml
+ 
+-BINARY start --pruning=nothing  --minimum-gas-prices=0$DENOM --rpc.laddr="tcp://0.0.0.0:$RPC" --json-rpc.api=eth,txpool,personal,net,debug,web3 --chain-id="$CHAIN_ID"
++BINARY start --pruning=nothing  --minimum-gas-prices=0$DENOM --rpc.laddr="tcp://0.0.0.0:$RPC"

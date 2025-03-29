@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/cosmos/chain-registry/master/chain.schema.json",
   "chain_name": "testevm",
-  "chain_type": "cosmos",
+  "chain_type": "ethereum",
   "status": "live",
   "website": "https://example.com",
   "network_type": "testnet",
@@ -11,9 +11,9 @@
   "daemon_name": "simd",
   "node_home": "$HOME/.testevm",
   "key_algos": [
-    "secp256k1"
+    "eth_secp256k1"
   ],
-  "slip44": 118,
+  "slip44": 60,
   "fees": {
     "fee_tokens": [
       {
