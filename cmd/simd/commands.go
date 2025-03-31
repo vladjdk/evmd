@@ -31,10 +31,10 @@ import (
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
-	evmosserverconfig "github.com/cosmos/evm/server/config"
+	evmserverconfig "github.com/cosmos/evm/server/config"
 
-	evmoscmd "github.com/cosmos/evm/client"
-	evmosserver "github.com/cosmos/evm/server"
+	evmcmd "github.com/cosmos/evm/client"
+	evmserver "github.com/cosmos/evm/server"
 	srvflags "github.com/cosmos/evm/server/flags"
 )
 
@@ -53,9 +53,9 @@ func initCometBFTConfig() *cmtcfg.Config {
 type CustomAppConfig struct {
 	serverconfig.Config
 
-	EVM     evmosserverconfig.EVMConfig
-	JSONRPC evmosserverconfig.JSONRPCConfig
-	TLS     evmosserverconfig.TLSConfig
+	EVM     evmserverconfig.EVMConfig
+	JSONRPC evmserverconfig.JSONRPCConfig
+	TLS     evmserverconfig.TLSConfig
 }
 
 // initAppConfig helps to override default appConfig template and configs.
@@ -83,14 +83,14 @@ func initAppConfig() (string, interface{}) {
 
 	customAppConfig := CustomAppConfig{
 		Config:  *srvCfg,
-		EVM:     *evmosserverconfig.DefaultEVMConfig(),
-		JSONRPC: *evmosserverconfig.DefaultJSONRPCConfig(),
-		TLS:     *evmosserverconfig.DefaultTLSConfig(),
+		EVM:     *evmserverconfig.DefaultEVMConfig(),
+		JSONRPC: *evmserverconfig.DefaultJSONRPCConfig(),
+		TLS:     *evmserverconfig.DefaultTLSConfig(),
 	}
 
 	customAppTemplate := serverconfig.DefaultConfigTemplate
 
-	customAppTemplate += evmosserverconfig.DefaultEVMConfigTemplate
+	customAppTemplate += evmserverconfig.DefaultEVMConfigTemplate
 
 	return customAppTemplate, customAppConfig
 }
@@ -113,16 +113,16 @@ func initRootCmd(
 	)
 
 	// add EVM' flavored TM commands to start server, etc.
-	evmosserver.AddCommands(
+	evmserver.AddCommands(
 		rootCmd,
-		evmosserver.NewDefaultStartOptions(newApp, app.DefaultNodeHome),
+		evmserver.NewDefaultStartOptions(newApp, app.DefaultNodeHome),
 		appExport,
 		addModuleInitFlags,
 	)
 
 	// add EVM key commands
 	rootCmd.AddCommand(
-		evmoscmd.KeyCommands(app.DefaultNodeHome, true),
+		evmcmd.KeyCommands(app.DefaultNodeHome, true),
 	)
 
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands

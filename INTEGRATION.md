@@ -341,7 +341,7 @@ import (
     evmante "github.com/cosmos/evm/ante/evm"
     evmencoding "github.com/cosmos/evm/encoding"
     srvflags "github.com/cosmos/evm/server/flags"
-    evmtypes "github.com/cosmos/evm/types"
+    cosmosevmtypes "github.com/cosmos/evm/types"
     evmutils "github.com/cosmos/evm/utils"
     "github.com/cosmos/evm/x/erc20"
     erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
@@ -566,7 +566,7 @@ options := chainante.HandlerOptions{
     FeeMarketKeeper: app.FeeMarketKeeper,
 	
     EvmKeeper:              app.EVMKeeper,
-    ExtensionOptionChecker: evmtypes.HasDynamicFeeExtensionOption,
+    ExtensionOptionChecker: cosmosevmtypes.HasDynamicFeeExtensionOption,
     SigGasConsumer:         evmante.SigVerificationGasConsumer,
     MaxTxGasWanted:         cast.ToUint64(appOpts.Get(srvflags.EVMMaxTxGasWanted)),
     TxFeeChecker:           evmevmante.NewDynamicFeeChecker(app.FeeMarketKeeper),
@@ -629,7 +629,7 @@ paramsKeeper.Subspace(erc20types.ModuleName)
 ```go
 func (app *ChainApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
     // Change this line
-    var genesisState evmtypes.GenesisState
+    var genesisState cosmosevmtypes.GenesisState
     // ... rest remains the same
 }
 ```
@@ -962,7 +962,7 @@ import (
 
 tempApp := app.NewChainApp(
     log.NewNopLogger(), dbm.NewMemDB(), nil, false, simtestutil.NewAppOptionsWithFlagHome(tempDir()),
-    app.NoOpEvmosOptions, // IMPORTANT: ensure that this is the no-op option
+    app.NoOpEvmOptions, // IMPORTANT: ensure that this is the no-op option
 )
 
 func NewRootCmd() *cobra.Command {
@@ -975,22 +975,9 @@ func NewRootCmd() *cobra.Command {
 }
 ```
 
-## Step 11: Update Chain Registry Files
+## Step 11: Final Checks and Running Your Local Chain
 
-Update `chain_registry.json`:
-```json
-{
-  "chain_type": "ethereum",
-  "key_algos": [
-    "eth_secp256k1"
-  ],
-  "slip44": 60
-}
-```
-
-## Step 12: Final Checks and Running Your Local Chain
-
-TODO: Refer to the following script for an example for how to set up a local testnet: 
+Refer to the following script for an example for how to set up a local testnet: https://github.com/cosmos/evm/blob/main/local_node.sh
 
 ## Troubleshooting Tips
 

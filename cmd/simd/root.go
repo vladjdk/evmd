@@ -19,7 +19,7 @@ import (
 	txmodule "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
-	evmoskeyring "github.com/cosmos/evm/crypto/keyring"
+	evmkeyring "github.com/cosmos/evm/crypto/keyring"
 	"github.com/rollchains/testevm/app"
 	"github.com/rollchains/testevm/app/params"
 )
@@ -49,7 +49,7 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(authtypes.AccountRetriever{}).
 		WithHomeDir(app.DefaultNodeHome).
 		WithBroadcastMode(flags.FlagBroadcastMode).
-		WithKeyringOptions(evmoskeyring.Option()).
+		WithKeyringOptions(evmkeyring.Option()).
 		WithLedgerHasProtobuf(true).
 		WithViper("")
 
