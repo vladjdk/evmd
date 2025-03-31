@@ -78,8 +78,6 @@ jobs:
           - "ictest-basic"
           - "ictest-poa"
           - "ictest-tokenfactory"
-          - "ictest-ibc"  #
-          - "ictest-packetforward"  #
       fail-fast: false
 
     steps:

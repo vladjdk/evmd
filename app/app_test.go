@@ -36,6 +36,7 @@ func TestAppExport(t *testing.T) {
 	// Making a new app object with the db, so that initchain hasn't been called
 	newGapp := NewChainApp(
 		logger, db, nil, true, simtestutil.NewAppOptionsWithFlagHome(t.TempDir()),
+		EVMAppOptions,
 	)
 	_, err = newGapp.ExportAppStateAndValidators(false, []string{}, nil)
 	require.NoError(t, err, "ExportAppStateAndValidators should not have an error")

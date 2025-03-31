@@ -2,17 +2,17 @@
 # Run this script to quickly install, setup, and run the current version of the network without docker.
 #
 # Examples:
-# CHAIN_ID="localchain-1" HOME_DIR="~/.testevm" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
-# CHAIN_ID="localchain-2" HOME_DIR="~/.testevm" CLEAN=true RPC=36657 REST=2317 PROFF=6061 P2P=36656 GRPC=8090 GRPC_WEB=8091 ROSETTA=8081 BLOCK_TIME="500ms" sh scripts/test_node.sh
+# CHAIN_ID="localchain_9000-1" HOME_DIR="~/.testevm" BLOCK_TIME="1000ms" CLEAN=true sh scripts/test_node.sh
+# CHAIN_ID="localchain_9000-2" HOME_DIR="~/.testevm" CLEAN=true RPC=36657 REST=2317 PROFF=6061 P2P=36656 GRPC=8090 GRPC_WEB=8091 ROSETTA=8081 BLOCK_TIME="500ms" sh scripts/test_node.sh
 
 set -eu
 
 export KEY="acc0"
 export KEY2="acc1"
 
-export CHAIN_ID=${CHAIN_ID:-"localchain-1"}
+export CHAIN_ID=${CHAIN_ID:-"localchain_9000-1"}
 export MONIKER="localvalidator"
-export KEYALGO="secp256k1"
+export KEYALGO="eth_secp256k1"
 export KEYRING=${KEYRING:-"test"}
 export HOME_DIR=$(eval echo "${HOME_DIR:-"~/.testevm"}")
 export BINARY=${BINARY:-simd}
@@ -70,9 +70,9 @@ from_scratch () {
     echo $mnemonic | BINARY keys add $key --keyring-backend $KEYRING --algo $KEYALGO --recover
   }
 
-  # cosmos1efd63aw40lxf3n4mhf7dzhjkr453axur6cpk92
+  # cosmos140fehngcrxvhdt84x729p3f0qmkmea8nt2uzux
   add_key $KEY "decorate bright ozone fork gallery riot bus exhaust worth way bone indoor calm squirrel merry zero scheme cotton until shop any excess stage laundry"
-  # cosmos1hj5fveer5cjtn4wd6wstzugjfdxzl0xpxvjjvr
+  # cosmos1r6yue0vuyj9m7xw78npspt9drq2tmtvg8h6r0d
   add_key $KEY2 "wealth flavor believe regret funny network recall kiss grape useless pepper cram hint member few certain unveil rather brick bargain curious require crowd raise"
 
   BINARY init $MONIKER --chain-id $CHAIN_ID --default-denom $DENOM
@@ -164,4 +164,4 @@ sed -i -e 's/address = ":8080"/address = "0.0.0.0:'$ROSETTA'"/g' $HOME_DIR/confi
 # Faster blocks
 sed -i -e 's/timeout_commit = "5s"/timeout_commit = "'$BLOCK_TIME'"/g' $HOME_DIR/config/config.toml
 
-BINARY start --pruning=nothing  --minimum-gas-prices=0$DENOM --rpc.laddr="tcp://0.0.0.0:$RPC"
+BINARY start --pruning=nothing  --minimum-gas-prices=0$DENOM --rpc.laddr="tcp://0.0.0.0:$RPC" --json-rpc.api=eth,txpool,personal,net,debug,web3 --chain-id="$CHAIN_ID"
