@@ -5,10 +5,10 @@ go 1.23.6
 // overrides
 replace (
 	cosmossdk.io/core => cosmossdk.io/core v0.11.0
-	cosmossdk.io/store => github.com/evmos/cosmos-sdk/store v0.0.0-20240718141609-414cbd051fbe
+	cosmossdk.io/store => github.com/cosmos/cosmos-sdk/store v1.1.2-0.20250319183239-53dea340efc7
 	github.com/CosmWasm/wasmd => github.com/rollchains/wasmd v0.50.0-evm
 
-	github.com/cosmos/cosmos-sdk => github.com/strangelove-ventures/cosmos-sdk v0.0.0-20250317212103-0767f8c5b1e5
+	github.com/cosmos/cosmos-sdk => github.com/cosmos/cosmos-sdk v0.50.13-0.20250319183239-53dea340efc7
 	github.com/ethereum/go-ethereum => github.com/evmos/go-ethereum v1.10.26-evmos-rc4
 	github.com/spf13/viper => github.com/spf13/viper v1.17.0 // v1.18+ breaks app overrides
 )
